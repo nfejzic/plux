@@ -1,0 +1,10 @@
+[package]
+name = "plux"
+description = "Tmux plugin manager written in Rust"
+version = "0.1.0"
+edition = "2024"
+author = "Nadir Fejzic <nadir@notfloor.com>"
+license = "MIT"
+repository = "https://git.notfloor.com/nfejzic/plux"
+
+[dependencies]
