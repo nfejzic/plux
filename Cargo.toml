@@ -1,10 +1,15 @@
-[package]
-name = "plux"
-description = "Tmux plugin manager written in Rust"
+[workspace]
+members = ["plux"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-author = "Nadir Fejzic <nadir@notfloor.com>"
-license = "MIT"
+authors = ["Nadir Fejzic <nadir@notfloor.com>"]
+description = "Crates for tmux API and plugin manager implementations"
 repository = "https://git.notfloor.com/nfejzic/plux"
+homepage = "https://git.notfloor.com/nfejzic/plux"
+readme = "README.md"
+license = "Apache-2.0"
 
-[dependencies]
+[workspace.dependencies]
