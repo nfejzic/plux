@@ -1,6 +1,9 @@
 //! `murus` is implementation of tmux API in Rust.
 
-use std::{io, process::Command};
+use std::{
+    io,
+    process::{Command, Output},
+};
 
 use session::Session;
 
@@ -37,6 +40,36 @@ impl Tmux {
         }
     }
 
+    pub fn get_option(&self, option: &str, scope: OptionScope) -> Result<String, Error> {
+        let mut cmd = std::process::Command::new("tmux");
+
+        // NOTE: * -q prevents errors from being returned
+        //       * -v makes sure only value is returned without option name
+        cmd.arg("show").arg("-qv");
+
+        if let Some(scope) = scope.to_arg() {
+            cmd.arg(scope);
+        }
+
+        let output = cmd.arg(option).output()?;
+
+        Ok(read_stdout(output))
+    }
+
+    pub fn set_option(&self, option: &str, value: &str, scope: OptionScope) -> Result<(), Error> {
+        let mut cmd = std::process::Command::new("tmux");
+
+        cmd.arg("set");
+
+        if let Some(scope) = scope.to_arg() {
+            cmd.arg(scope);
+        }
+
+        cmd.arg(option).arg(value).spawn()?.wait()?;
+
+        Ok(())
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<Session>, Error> {
         let mut cmd = std::process::Command::new("tmux");
         cmd.arg("list-sessions");
@@ -65,4 +98,31 @@ impl Tmux {
 
         Ok(())
     }
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OptionScope {
+    #[default]
+    Session,
+    Pane,
+    Window,
+    Server,
+    Global,
+}
+
+impl OptionScope {
+    fn to_arg(self) -> Option<&'static str> {
+        match self {
+            OptionScope::Session => None,
+            OptionScope::Pane => Some("-p"),
+            OptionScope::Window => Some("-w"),
+            OptionScope::Server => Some("-s"),
+            OptionScope::Global => Some("-g"),
+        }
+    }
+}
+
+fn read_stdout(output: Output) -> String {
+    let stdout = output.stdout;
+    String::from_utf8(stdout).expect("tmux uses utf8")
 }
