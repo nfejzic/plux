@@ -2,6 +2,7 @@
 
 use std::{
     io,
+    path::Path,
     process::{Command, Output},
 };
 
@@ -28,6 +29,12 @@ pub enum Error {
 
     #[error("Command failed {}", .0)]
     CommandFailed(#[from] io::Error),
+
+    #[error("Option not found {}", .0)]
+    OptionNotFound(String),
+
+    #[error("Failed sourcing file. stdout:\n{stdout}\n\nstderr:\n{stderr}")]
+    SourceFile { stdout: String, stderr: String },
 }
 
 pub struct Tmux {}
@@ -43,15 +50,20 @@ impl Tmux {
     pub fn get_option(&self, option: &str, scope: OptionScope) -> Result<String, Error> {
         let mut cmd = std::process::Command::new("tmux");
 
-        // NOTE: * -q prevents errors from being returned
-        //       * -v makes sure only value is returned without option name
-        cmd.arg("show").arg("-qv");
+        // NOTE: -v makes sure only value is returned without option name
+        cmd.arg("show").arg("-v");
 
         if let Some(scope) = scope.to_arg() {
             cmd.arg(scope);
         }
 
         let output = cmd.arg(option).output()?;
+
+        if !output.stderr.is_empty() {
+            return Err(Error::OptionNotFound(
+                String::from_utf8(output.stderr).expect("tmux uses utf8"),
+            ));
+        }
 
         Ok(read_stdout(output))
     }
@@ -68,6 +80,32 @@ impl Tmux {
         cmd.arg(option).arg(value).spawn()?.wait()?;
 
         Ok(())
+    }
+
+    fn run_cmd(mut cmd: Command) -> Result<(), Error> {
+        let output = cmd.output()?;
+
+        if !output.status.success() {
+            let stdout = String::from_utf8(output.stdout).expect("tmux uses utf8");
+            let stderr = String::from_utf8(output.stderr).expect("tmux uses utf8");
+            return Err(Error::SourceFile { stdout, stderr });
+        }
+
+        Ok(())
+    }
+
+    pub fn source_tmux(&self, path: &Path) -> Result<(), Error> {
+        let mut cmd = std::process::Command::new("tmux");
+        cmd.arg("source-file").arg(path);
+
+        Self::run_cmd(cmd)
+    }
+
+    pub fn run_shell(&self, path: &Path) -> Result<(), Error> {
+        let mut cmd = std::process::Command::new("tmux");
+        cmd.arg("run-shell").arg(path);
+
+        Self::run_cmd(cmd)
     }
 
     pub fn list_sessions(&self) -> Result<Vec<Session>, Error> {
