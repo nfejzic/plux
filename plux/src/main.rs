@@ -1,8 +1,10 @@
 // TODO:
-//       1. Figure out where the install path for plugins is
-//       2. Figure out list of plugins (plux.toml?)
-//       3. Figure out how to pull plugins (github + commit/tag)
-//       4. Figure out how to source plugins from tmux, is there some standard on this?
+//       -[x] where the install path for plugins is
+//       -[x] list of plugins (plux.toml?)
+//       -[?] source plugins from tmux, is there some standard on this?
+//       -[ ] pull plugins (github + commit/tag)
+//       -[ ] mark current version of plugin
+//       -[ ] Update plugins
 
 use std::{
     env::VarError,
@@ -107,15 +109,17 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpec, tmux: &Tmux) {
         let read_dir = std::fs::read_dir(&plugin_dir).unwrap();
         let entries: Vec<_> = read_dir.into_iter().map(Result::unwrap).collect();
 
-        if let Some(plux_tmux) = entries.iter().find(|entry| {
+        let plux_tmux_entry = entries.iter().find(|entry| {
             entry
                 .path()
                 .file_name()
                 .is_some_and(|filename| filename == "plux.tmux")
-        }) {
-            if let Err(error) = tmux.source_tmux(&plux_tmux.path()) {
-                eprintln!("{error}");
-            }
+        });
+
+        if let Some(plux_tmux) = plux_tmux_entry
+            && let Err(error) = tmux.source_tmux(&plux_tmux.path())
+        {
+            eprintln!("{error}");
         }
 
         for entry in entries
@@ -132,25 +136,26 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpec, tmux: &Tmux) {
 fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpec) {
     println!("installing plugins:");
     for (plugin, url) in &plugin_spec.plugins {
-        println!(
-            "\t{plugin} from '{url}' -> '{}{plugin}'",
-            plugins_path.display()
-        );
+        let plugin_dir = plugins_path.join(plugin);
 
-        if let Err(error) = install_single_plugin(plugin, url, plugins_path) {
+        if plugin_dir.is_dir() {
+            println!("\t{plugin} already installed, skipping...");
+            continue;
+        }
+
+        println!("\t{plugin} from '{url}' -> '{}'", plugin_dir.display());
+
+        if let Err(error) = install_single_plugin(url, plugin_dir) {
             eprintln!("Could not install plugin:\n{error}");
         }
     }
 }
 
-fn install_single_plugin(name: &str, url: &str, plugins_dir: &Path) -> std::io::Result<()> {
-    let destionation_dir = plugins_dir.join(name);
-    let destionation_dir = destionation_dir
-        .to_str()
-        .expect("plugins path should be valid utf8");
-
+fn install_single_plugin(url: &str, destination_dir: PathBuf) -> std::io::Result<()> {
     let mut cmd = std::process::Command::new("git");
-    cmd.args(["clone", "--depth", "1", url, destionation_dir]);
+
+    cmd.args(["clone", "--depth", "1", url])
+        .arg(destination_dir);
     let output = cmd.output()?;
 
     if !output.status.success() {
