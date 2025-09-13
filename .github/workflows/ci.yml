@@ -1,33 +1,58 @@
-name: CI
+name: Rust CI Workflow
 
 on:
   push:
-    branches: ["main"]
+    branches: [ main, feature ]
   pull_request:
-    branches: ["main"]
+    branches: [ main, feature ]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ci:
+  format:
+    name: Check Formatting
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run cargo fmt
+      run: cargo fmt -- --check
+
+  unused-dependencies:
+    name: Check if there are unused dependencies
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Unused dependencies
+        uses: bnjbvr/cargo-machete@main
 
-      - name: Install Rust toolchain
-        run: rustup update --no-self-update stable
+  lint:
+    name: Run Linter (clippy)
+    runs-on: ubuntu-latest
+    needs: format
+    
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run linter
+      run: cargo clippy -- -D warnings
+  
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run tests
+      run: cargo test --verbose
 
-      - name: Test
-        run: cargo test --verbose
-
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
-
-      - name: Run rustfmt
-        run: cargo fmt -- --check
-
-      - name: Build Documentation
-        run: cargo doc --workspace --no-deps
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build the workspace
+      run: cargo build --verbose
