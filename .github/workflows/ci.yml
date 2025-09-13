@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Unused dependencies
-      - uses: bnjbvr/cargo-machete@main
+        uses: bnjbvr/cargo-machete@main
 
   lint:
     name: Run Linter (clippy)
