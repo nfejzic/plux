@@ -1,11 +1,3 @@
-// TODO:
-//       -[x] where the install path for plugins is
-//       -[x] list of plugins (plux.toml?)
-//       -[?] source plugins from tmux, is there some standard on this?
-//       -[ ] pull plugins (github + commit/tag)
-//       -[ ] mark current version of plugin
-//       -[ ] Update plugins
-
 use std::{
     env::VarError,
     path::{Path, PathBuf},
