@@ -9,7 +9,7 @@ pub const DEFAULT_SPEC_PATH: &str = "$HOME/.config/tmux/plux.toml";
 
 /// Models the TOML file used to specify plugins to install. See [`PluginSpec`] for more
 /// information.
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct PluginSpecFile {
     pub plugins: HashMap<String, PluginSpec>,
 }

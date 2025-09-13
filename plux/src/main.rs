@@ -2,11 +2,12 @@ use std::{
     env::VarError,
     fmt::Write,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use clap::Parser;
 use murus::{OptionScope, Tmux};
-use plux::plugin::{InstallError, PluginSpecFile};
+use plux::plugin::{InstallError, PluginSpec, PluginSpecFile};
 
 const HELP_TEMPLATE: &str = r#"
 {before-help}{name} {version}
@@ -81,6 +82,7 @@ fn main() {
 }
 
 fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
+    let init = Instant::now();
     let _ = Config::parse();
     let Ok(tmux) = murus::Tmux::try_new() else {
         stdout!(logger, "Plux must be called within a tmux session.");
@@ -112,6 +114,7 @@ fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(error_code);
         }
     };
+
     let plugin_spec: PluginSpecFile = match toml::from_str(&plugins_spec) {
         Ok(ps) => ps,
         Err(error) => {
@@ -120,8 +123,14 @@ fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    install_plugins(logger, &plugins_path, &plugin_spec);
+    println!("Plugin spec read in {:?}", init.elapsed());
+
+    let init = Instant::now();
+    install_plugins(logger, &plugins_path, plugin_spec.clone());
+    println!("Plugins installed in {:?}", init.elapsed());
+    let init = Instant::now();
     source_plugins(logger, &plugins_path, &plugin_spec, &tmux);
+    println!("Plugins sourced in {:?}", init.elapsed());
 
     Ok(())
 }
@@ -132,67 +141,117 @@ fn source_plugins(
     plugin_spec: &PluginSpecFile,
     tmux: &Tmux,
 ) {
-    for plugin in plugin_spec.plugins.keys() {
-        let plugin_dir = plugins_path.join(plugin);
+    let (stderr, stderr_rx) = std::sync::mpsc::channel();
 
-        let read_dir = std::fs::read_dir(&plugin_dir).unwrap();
-        let entries: Vec<_> = read_dir.into_iter().map(Result::unwrap).collect();
+    std::thread::scope(move |scope| {
+        let (tx, rx) = std::sync::mpsc::channel();
 
-        let plux_tmux_entry = entries.iter().find(|entry| {
-            entry
-                .path()
-                .file_name()
-                .is_some_and(|filename| filename == "plux.tmux")
-        });
+        for plugin in plugin_spec.plugins.keys() {
+            let stderr = stderr.clone();
+            let tx = tx.clone();
+            scope.spawn(move || {
+                let plugin_dir = plugins_path.join(plugin);
 
-        if let Some(plux_tmux) = plux_tmux_entry {
-            match tmux.source_tmux(&plux_tmux.path()) {
-                Err(error) => stderr!(logger, "{error}"),
-                Ok(_) => continue,
+                let read_dir = std::fs::read_dir(&plugin_dir).unwrap();
+                let entries: Vec<_> = read_dir.into_iter().map(Result::unwrap).collect();
+
+                let plux_tmux_entry = entries.iter().find(|entry| {
+                    entry
+                        .path()
+                        .file_name()
+                        .is_some_and(|filename| filename == "plux.tmux")
+                });
+
+                if let Some(plux_tmux) = plux_tmux_entry {
+                    match tmux.source_tmux(&plux_tmux.path()) {
+                        Err(error) => stderr.send(format!("{error}")).unwrap(),
+                        Ok(_) => return,
+                    }
+                }
+
+                println!("sending entries");
+                tx.send(entries).unwrap();
+            });
+        }
+
+        drop(tx);
+
+        while let Ok(entries) = rx.recv() {
+            println!("received entries");
+            for entry in entries
+                .into_iter()
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmux"))
+            {
+                let stderr = stderr.clone();
+                scope.spawn(move || {
+                    if let Err(error) = tmux.run_shell(&entry.path()) {
+                        stderr.send(format!("{error}")).unwrap();
+                    }
+                });
             }
         }
 
-        for entry in entries
-            .iter()
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmux"))
-        {
-            if let Err(error) = tmux.run_shell(&entry.path()) {
-                stderr!(logger, "{error}");
-            }
+        drop(stderr);
+
+        while let Ok(stderr) = stderr_rx.recv() {
+            println!("here");
+            stderr!(logger, "{stderr}");
         }
-    }
+    });
 }
 
-fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: &PluginSpecFile) {
+fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: PluginSpecFile) {
     stdout!(logger, "installing plugins:");
 
-    for (plugin_name, plugin_spec) in &plugin_spec.plugins {
-        let plugin_dir = plugins_path.join(plugin_name);
-
-        match plugin_spec.try_install(&plugin_dir) {
-            Ok(_) => (),
-            Err(InstallError::AlreadyInstalled) => {
-                stdout!(
-                    logger,
-                    "\t{plugin_name} already installed, skipping git clone..."
-                );
-            }
-            Err(error) => {
-                stderr!(logger, "Could not install plugin:\n{error}");
-                continue;
-            }
-        }
-
-        // plugin successfully cloned, now let's try setting the version
-        match plugin_spec.choose_version(&plugin_dir) {
-            Ok(installed_version) => {
-                stdout!(logger, "\t{plugin_name} intalled with {installed_version}")
-            }
-            Err(error) => {
-                stderr!(logger, "Failed to install '{plugin_name}', error:{error}");
-            }
-        }
+    enum Msg {
+        PluginReady(String, PluginSpec),
+        Stdout(String),
     }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::scope(|s| {
+        for (plugin_name, plugin_spec) in plugin_spec.plugins {
+            let tx = tx.clone();
+
+            s.spawn(move || {
+                let plugin_dir = plugins_path.join(&plugin_name);
+                match plugin_spec.try_install(&plugin_dir) {
+                    Ok(_) => tx.send(Msg::PluginReady(plugin_name, plugin_spec)).unwrap(),
+                    Err(InstallError::AlreadyInstalled) => {
+                        tx.send(Msg::Stdout(format!(
+                            "\t{plugin_name} already installed, skipping git clone..."
+                        )))
+                        .unwrap();
+                    }
+                    Err(error) => {
+                        tx.send(Msg::Stdout(format!("Could not install plugin:\n{error}")))
+                            .unwrap();
+                    }
+                }
+            });
+        }
+
+        drop(tx);
+
+        while let Ok(msg) = rx.recv() {
+            match msg {
+                Msg::PluginReady(plugin_name, plugin_spec) => {
+                    // plugin successfully cloned, now let's try setting the version
+                    let plugin_dir = plugins_path.join(&plugin_name);
+                    match plugin_spec.choose_version(&plugin_dir) {
+                        Ok(installed_version) => {
+                            stdout!(logger, "\t{plugin_name} intalled with {installed_version}");
+                        }
+                        Err(error) => {
+                            stderr!(logger, "Failed to install '{plugin_name}', error:{error}");
+                        }
+                    }
+                }
+                Msg::Stdout(msg) => stdout!(logger, "{msg}"),
+            }
+        }
+    });
 }
 
 fn expand_path(mut path: String) -> Result<PathBuf, VarError> {

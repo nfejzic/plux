@@ -103,7 +103,7 @@ impl Tmux {
 
     pub fn run_shell(&self, path: &Path) -> Result<(), Error> {
         let mut cmd = std::process::Command::new("tmux");
-        cmd.arg("run-shell").arg(path);
+        cmd.arg("run-shell").arg("-b").arg(path);
 
         Self::run_cmd(cmd)
     }
