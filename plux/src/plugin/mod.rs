@@ -14,21 +14,24 @@ pub struct PluginSpecFile {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TagOrCommit {
+pub enum Version {
     /// Git tag to be used as plugin's version.
     Tag(String),
     /// Git commit hash to be used as plugin's version.
     Commit(String),
+    /// Git branch to use as version. Latest commit of that branch will be used.
+    Branch(String),
 }
 
-impl std::fmt::Display for TagOrCommit {
+impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (prefix, version) = match self {
-            TagOrCommit::Tag(tag) => ("tag", tag),
-            TagOrCommit::Commit(hash) => ("commit", hash),
+            Version::Tag(tag) => ("tag", tag),
+            Version::Commit(hash) => ("commit", hash),
+            Version::Branch(branch) => ("branch", branch),
         };
 
-        f.write_fmt(format_args!("{prefix} {version}"))
+        f.write_fmt(format_args!("{prefix} '{}'", version.trim()))
     }
 }
 
@@ -39,14 +42,7 @@ pub struct FullPluginSpec {
 
     /// Optional version specification for the given plugin.
     #[serde(flatten)]
-    pub tag_or_commit: Option<TagOrCommit>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
-#[serde(untagged)]
-pub enum PluginSpec {
-    Url(String),
-    Full(FullPluginSpec),
+    pub tag_or_commit: Option<Version>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,6 +82,13 @@ impl InstallError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
+#[serde(untagged)]
+pub enum PluginSpec {
+    Url(String),
+    Full(FullPluginSpec),
+}
+
 impl PluginSpec {
     pub fn try_install(&self, destination_dir: &Path) -> Result<(), InstallError> {
         let mut cmd = Command::new("git");
@@ -111,7 +114,7 @@ impl PluginSpec {
         Ok(())
     }
 
-    pub fn choose_version(&self, destination_dir: &Path) -> Result<TagOrCommit, InstallError> {
+    pub fn choose_version(&self, destination_dir: &Path) -> Result<Version, InstallError> {
         let res = Command::new("git")
             .args(["fetch", "--all", "--tags"])
             .current_dir(destination_dir)
@@ -139,12 +142,13 @@ impl PluginSpec {
                     .output(),
                 InstallError::Version,
             )?;
-            &TagOrCommit::Commit(commit_hash)
+            &Version::Commit(commit_hash)
         };
 
         let version = match &tag_or_commit {
-            TagOrCommit::Tag(tag) => tag,
-            TagOrCommit::Commit(version) => version,
+            Version::Tag(tag) => tag,
+            Version::Commit(version) => version,
+            Version::Branch(branch) => branch,
         };
 
         let mut cmd = Command::new("git");
