@@ -142,7 +142,8 @@ fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
             println!("\t{plugin_name} already installed, skipping git clone...");
         } else {
             println!(
-                "\t{plugin_name} from '{plugin_spec:?}' -> '{}'",
+                "\t{plugin_name} from '{}' -> '{}'",
+                plugin_spec.url(),
                 plugin_dir.display()
             );
 

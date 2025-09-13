@@ -90,6 +90,13 @@ pub enum PluginSpec {
 }
 
 impl PluginSpec {
+    pub fn url(&self) -> &str {
+        match self {
+            PluginSpec::Url(url) => url,
+            PluginSpec::Full(full_plugin_spec) => &full_plugin_spec.url,
+        }
+    }
+
     pub fn try_install(&self, destination_dir: &Path) -> Result<(), InstallError> {
         let mut cmd = Command::new("git");
 
