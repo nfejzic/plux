@@ -16,6 +16,12 @@ Plux needs to know two paths to do the work:
 - `@plux_plugins_path` - directory that will contain installed plugins. By
   default the `$HOME/.config/tmux/plux/` directory is used.
 
+### Installation
+
+You can install plux with using [cargo](https://doc.rust-lang.org/cargo/):
+
+`cargo install plux`
+
 ### Plugin specification
 
 Plugins are specified in a single `plux.toml` file, with following syntax:
