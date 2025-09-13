@@ -116,10 +116,11 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux
                 .is_some_and(|filename| filename == "plux.tmux")
         });
 
-        if let Some(plux_tmux) = plux_tmux_entry
-            && let Err(error) = tmux.source_tmux(&plux_tmux.path())
-        {
-            eprintln!("{error}");
+        if let Some(plux_tmux) = plux_tmux_entry {
+            match tmux.source_tmux(&plux_tmux.path()) {
+                Err(error) => eprintln!("{error}"),
+                Ok(_) => continue,
+            }
         }
 
         for entry in entries
