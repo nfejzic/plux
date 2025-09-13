@@ -139,17 +139,27 @@ fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
         let plugin_dir = plugins_path.join(plugin_name);
 
         if plugin_dir.is_dir() {
-            println!("\t{plugin_name} already installed, skipping...");
-            continue;
+            println!("\t{plugin_name} already installed, skipping git clone...");
+        } else {
+            println!(
+                "\t{plugin_name} from '{plugin_spec:?}' -> '{}'",
+                plugin_dir.display()
+            );
+
+            if let Err(error) = plugin_spec.try_install(&plugin_dir) {
+                eprintln!("Could not install plugin:\n{error}");
+                continue;
+            }
         }
 
-        println!(
-            "\t{plugin_name} from '{plugin_spec:?}' -> '{}'",
-            plugin_dir.display()
-        );
-
-        if let Err(error) = plugin_spec.try_install(plugin_dir) {
-            eprintln!("Could not install plugin:\n{error}");
+        // plugin successfully cloned, now let's try setting the version
+        match plugin_spec.choose_version(&plugin_dir) {
+            Ok(installed_version) => {
+                println!("\t{plugin_name} intalled with {installed_version}")
+            }
+            Err(error) => {
+                eprintln!("Failed to install '{plugin_name}', error:{error}");
+            }
         }
     }
 }

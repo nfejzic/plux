@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::Path, process::Output};
 
 pub const DEFAULT_PLUGINS_PATH: &str = "$HOME/.config/tmux/plux/";
 pub const DEFAULT_SPEC_PATH: &str = "$HOME/.config/tmux/plux.toml";
@@ -15,6 +15,17 @@ pub enum TagOrCommit {
     Tag(String),
     /// Git commit hash to be used as plugin's version.
     Commit(String),
+}
+
+impl std::fmt::Display for TagOrCommit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (prefix, version) = match self {
+            TagOrCommit::Tag(tag) => ("tag", tag),
+            TagOrCommit::Commit(hash) => ("commit", hash),
+        };
+
+        f.write_fmt(format_args!("{prefix} {version}"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
@@ -47,10 +58,32 @@ pub enum InstallError {
 
     #[error("could not determine plugin's version, error: {}", .0)]
     Version(String),
+
+    #[error("could not fetch available tags: {}", .0)]
+    TagFetch(String),
+}
+
+impl InstallError {
+    fn wrap_cmd_res(
+        output: std::io::Result<Output>,
+        wrapper: impl FnOnce(String) -> Self,
+    ) -> Result<String, Self> {
+        match output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8(output.stdout).expect("commands return utf8");
+                Ok(stdout)
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8(output.stderr).expect("commands return utf8");
+                Err(wrapper(stderr))
+            }
+            Err(error) => Err(wrapper(error.to_string())),
+        }
+    }
 }
 
 impl PluginSpec {
-    pub fn try_install(&self, destination_dir: PathBuf) -> Result<TagOrCommit, InstallError> {
+    pub fn try_install(&self, destination_dir: &Path) -> Result<(), InstallError> {
         let mut cmd = std::process::Command::new("git");
 
         let url = match self {
@@ -59,7 +92,7 @@ impl PluginSpec {
         };
 
         cmd.args(["clone", "--depth", "1", url])
-            .arg(&destination_dir);
+            .arg(destination_dir);
 
         let output = cmd.output()?;
 
@@ -71,11 +104,17 @@ impl PluginSpec {
             .into());
         }
 
-        // plugin successfully cloned, now let's try setting the version
-        self.choose_version(destination_dir)
+        Ok(())
     }
 
-    fn choose_version(&self, destination_dir: PathBuf) -> Result<TagOrCommit, InstallError> {
+    pub fn choose_version(&self, destination_dir: &Path) -> Result<TagOrCommit, InstallError> {
+        let res = std::process::Command::new("git")
+            .args(["fetch", "--all", "--tags"])
+            .current_dir(destination_dir)
+            .output();
+
+        InstallError::wrap_cmd_res(res, InstallError::Version)?;
+
         let tag_or_commit = if let PluginSpec::Full(full_plugin_spec) = self
             && let Some(tag_or_commit) = &full_plugin_spec.tag_or_commit
         {
@@ -83,21 +122,11 @@ impl PluginSpec {
         } else {
             let result = std::process::Command::new("git")
                 .args(["rev-parse", "HEAD"])
-                .current_dir(&destination_dir)
+                .current_dir(destination_dir)
                 .output();
 
-            match result {
-                Ok(output) if output.status.success() => {
-                    let commit_hash =
-                        String::from_utf8(output.stdout).expect("commit hash is ascii");
-                    &TagOrCommit::Commit(commit_hash)
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8(output.stderr).expect("git produces valid utf8");
-                    return Err(InstallError::Version(stderr));
-                }
-                Err(error) => return Err(InstallError::Version(error.to_string())),
-            }
+            let commit_hash = InstallError::wrap_cmd_res(result, InstallError::Version)?;
+            &TagOrCommit::Commit(commit_hash)
         };
 
         let version = match &tag_or_commit {
@@ -105,11 +134,11 @@ impl PluginSpec {
             TagOrCommit::Commit(version) => version,
         };
 
-        match std::process::Command::new("git")
-            .args(["checkout", version])
-            .current_dir(destination_dir)
-            .output()
-        {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["checkout", version.trim()])
+            .current_dir(destination_dir);
+
+        match cmd.output() {
             Ok(output) if output.status.success() => Ok(tag_or_commit.clone()),
             Ok(output) => Err(InstallError::GitCheckout {
                 version: version.clone(),
