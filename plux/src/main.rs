@@ -2,7 +2,6 @@ use std::{
     env::VarError,
     fmt::Write,
     path::{Path, PathBuf},
-    time::Instant,
 };
 
 use clap::Parser;
@@ -82,7 +81,6 @@ fn main() {
 }
 
 fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
-    let init = Instant::now();
     let _ = Config::parse();
     let Ok(tmux) = murus::Tmux::try_new() else {
         stdout!(logger, "Plux must be called within a tmux session.");
@@ -123,14 +121,9 @@ fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    println!("Plugin spec read in {:?}", init.elapsed());
-
-    let init = Instant::now();
     install_plugins(logger, &plugins_path, plugin_spec.clone());
-    println!("Plugins installed in {:?}", init.elapsed());
-    let init = Instant::now();
+
     source_plugins(logger, &plugins_path, &plugin_spec, &tmux);
-    println!("Plugins sourced in {:?}", init.elapsed());
 
     Ok(())
 }
@@ -169,7 +162,6 @@ fn source_plugins(
                     }
                 }
 
-                println!("sending entries");
                 tx.send(entries).unwrap();
             });
         }
@@ -177,7 +169,6 @@ fn source_plugins(
         drop(tx);
 
         while let Ok(entries) = rx.recv() {
-            println!("received entries");
             for entry in entries
                 .into_iter()
                 .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmux"))
@@ -194,7 +185,6 @@ fn source_plugins(
         drop(stderr);
 
         while let Ok(stderr) = stderr_rx.recv() {
-            println!("here");
             stderr!(logger, "{stderr}");
         }
     });
