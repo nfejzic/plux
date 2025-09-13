@@ -152,6 +152,7 @@ dependencies = [
  "clap",
  "murus",
  "serde",
+ "thiserror",
  "toml",
 ]
 

@@ -13,7 +13,7 @@ use std::{
 
 use clap::Parser;
 use murus::{OptionScope, Tmux};
-use plux::PluginSpecFile;
+use plux::plugin::PluginSpecFile;
 
 const HELP_TEMPLATE: &str = r#"
 {before-help}{name} {version}
@@ -66,13 +66,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let plugin_spec_path = tmux
         .get_option(SPEC_PATH_OPTION_NAME, OptionScope::Global)
-        .unwrap_or(plux::DEFAULT_SPEC_PATH.into());
+        .unwrap_or(plux::plugin::DEFAULT_SPEC_PATH.into());
 
     let plugin_spec_path = expand_path(plugin_spec_path)?;
 
     let plugins_path = tmux
         .get_option(PLUGINS_PATH_OPTION_NAME, OptionScope::Global)
-        .unwrap_or(plux::DEFAULT_PLUGINS_PATH.into());
+        .unwrap_or(plux::plugin::DEFAULT_PLUGINS_PATH.into());
 
     let plugins_path = expand_path(plugins_path)?;
 
@@ -135,37 +135,23 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux
 
 fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
     println!("installing plugins:");
-    for (plugin, url) in &plugin_spec.plugins {
-        let plugin_dir = plugins_path.join(plugin);
+    for (plugin_name, plugin_spec) in &plugin_spec.plugins {
+        let plugin_dir = plugins_path.join(plugin_name);
 
         if plugin_dir.is_dir() {
-            println!("\t{plugin} already installed, skipping...");
+            println!("\t{plugin_name} already installed, skipping...");
             continue;
         }
 
-        println!("\t{plugin} from '{url}' -> '{}'", plugin_dir.display());
+        println!(
+            "\t{plugin_name} from '{plugin_spec:?}' -> '{}'",
+            plugin_dir.display()
+        );
 
-        if let Err(error) = install_single_plugin(url, plugin_dir) {
+        if let Err(error) = plugin_spec.try_install(plugin_dir) {
             eprintln!("Could not install plugin:\n{error}");
         }
     }
-}
-
-fn install_single_plugin(url: &str, destination_dir: PathBuf) -> std::io::Result<()> {
-    let mut cmd = std::process::Command::new("git");
-
-    cmd.args(["clone", "--depth", "1", url])
-        .arg(destination_dir);
-    let output = cmd.output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(std::io::Error::other(format!(
-            "Failed cloning plugin. Error:\n\tstderr = '{stderr}'"
-        )));
-    }
-
-    Ok(())
 }
 
 fn expand_path(mut path: String) -> Result<PathBuf, VarError> {
