@@ -1,5 +1,6 @@
 use std::{
     env::VarError,
+    fmt::Write,
     path::{Path, PathBuf},
 };
 
@@ -49,10 +50,40 @@ struct Config;
 const PLUGINS_PATH_OPTION_NAME: &str = "@plux_plugins_path";
 const SPEC_PATH_OPTION_NAME: &str = "@plux_toml_path";
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Default)]
+struct Logger {
+    stdout: String,
+    stderr: String,
+}
+
+macro_rules! stdout (
+    ($logger:ident, $($fmt:tt)*) => {
+        ::std::writeln!(&mut $logger.stdout, $($fmt)*).expect("writing to string is infallible")
+    }
+);
+
+macro_rules! stderr (
+    ($logger:ident, $($fmt:tt)*) => {
+        ::std::writeln!(&mut $logger.stderr, $($fmt)*).expect("writing to string is infallible")
+    }
+);
+
+fn main() {
+    let mut logger = Logger::default();
+
+    if let Err(error) = run(&mut logger) {
+        eprintln!("Plugin installation failed...");
+        eprintln!("stdout:\n{}", logger.stdout);
+        eprintln!("stderr:\n{}", logger.stderr);
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}
+
+fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
     let _ = Config::parse();
     let Ok(tmux) = murus::Tmux::try_new() else {
-        eprintln!("Plux must be called within a tmux session.");
+        stdout!(logger, "Plux must be called within a tmux session.");
         std::process::exit(1);
     };
 
@@ -71,11 +102,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plugins_spec = match std::fs::read_to_string(&plugin_spec_path) {
         Ok(p) => p,
         Err(error) => {
-            eprintln!(
+            stderr!(
+                logger,
                 "Could not read plugins spec at {}",
                 plugin_spec_path.display()
             );
-            eprintln!("Error:\n{error}");
+            stderr!(logger, "Error:\n{error}");
             let error_code = error.raw_os_error().unwrap_or(1);
             std::process::exit(error_code);
         }
@@ -83,18 +115,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plugin_spec: PluginSpecFile = match toml::from_str(&plugins_spec) {
         Ok(ps) => ps,
         Err(error) => {
-            eprintln!("Syntax error in plugins spec:\n{error}");
+            stderr!(logger, "Syntax error in plugins spec:\n{error}");
             std::process::exit(1);
         }
     };
 
-    install_plugins(&plugins_path, &plugin_spec);
-    source_plugins(&plugins_path, &plugin_spec, &tmux);
+    install_plugins(logger, &plugins_path, &plugin_spec);
+    source_plugins(logger, &plugins_path, &plugin_spec, &tmux);
 
     Ok(())
 }
 
-fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux) {
+fn source_plugins(
+    logger: &mut Logger,
+    plugins_path: &Path,
+    plugin_spec: &PluginSpecFile,
+    tmux: &Tmux,
+) {
     for plugin in plugin_spec.plugins.keys() {
         let plugin_dir = plugins_path.join(plugin);
 
@@ -110,7 +147,7 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux
 
         if let Some(plux_tmux) = plux_tmux_entry {
             match tmux.source_tmux(&plux_tmux.path()) {
-                Err(error) => eprintln!("{error}"),
+                Err(error) => stderr!(logger, "{error}"),
                 Ok(_) => continue,
             }
         }
@@ -120,14 +157,14 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmux"))
         {
             if let Err(error) = tmux.run_shell(&entry.path()) {
-                eprintln!("{error}");
+                stderr!(logger, "{error}");
             }
         }
     }
 }
 
-fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
-    println!("installing plugins:");
+fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: &PluginSpecFile) {
+    stdout!(logger, "installing plugins:");
 
     for (plugin_name, plugin_spec) in &plugin_spec.plugins {
         let plugin_dir = plugins_path.join(plugin_name);
@@ -135,10 +172,13 @@ fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
         match plugin_spec.try_install(&plugin_dir) {
             Ok(_) => (),
             Err(InstallError::AlreadyInstalled) => {
-                println!("\t{plugin_name} already installed, skipping git clone...");
+                stdout!(
+                    logger,
+                    "\t{plugin_name} already installed, skipping git clone..."
+                );
             }
             Err(error) => {
-                eprintln!("Could not install plugin:\n{error}");
+                stderr!(logger, "Could not install plugin:\n{error}");
                 continue;
             }
         }
@@ -146,10 +186,10 @@ fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
         // plugin successfully cloned, now let's try setting the version
         match plugin_spec.choose_version(&plugin_dir) {
             Ok(installed_version) => {
-                println!("\t{plugin_name} intalled with {installed_version}")
+                stdout!(logger, "\t{plugin_name} intalled with {installed_version}")
             }
             Err(error) => {
-                eprintln!("Failed to install '{plugin_name}', error:{error}");
+                stderr!(logger, "Failed to install '{plugin_name}', error:{error}");
             }
         }
     }
