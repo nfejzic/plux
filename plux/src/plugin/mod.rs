@@ -7,11 +7,14 @@ use std::{
 pub const DEFAULT_PLUGINS_PATH: &str = "$HOME/.config/tmux/plux/";
 pub const DEFAULT_SPEC_PATH: &str = "$HOME/.config/tmux/plux.toml";
 
+/// Models the TOML file used to specify plugins to install. See [`PluginSpec`] for more
+/// information.
 #[derive(serde::Deserialize)]
 pub struct PluginSpecFile {
     pub plugins: HashMap<String, PluginSpec>,
 }
 
+/// Models supported version specifiers for a plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Version {
@@ -35,6 +38,18 @@ impl std::fmt::Display for Version {
     }
 }
 
+/// Models the full plugin specification (as opposed to URL-only). Main use of this struct is to
+/// support specifying the version of plugin to be installed. For example, this allows the
+/// following:
+///
+/// ```toml
+/// # tag as version
+/// first = { url = "...", tag = "v1.0.0" }
+/// # branch as version
+/// second = { url = "...", branch = "main" }
+/// # commit hash as version
+/// third = { url = "...", commit = "<commit hash>" }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
 pub struct FullPluginSpec {
     /// Url to the git repository where plugin is hosted.
@@ -45,25 +60,34 @@ pub struct FullPluginSpec {
     pub tag_or_commit: Option<Version>,
 }
 
+/// Errors that can occur during installation of plugin.
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
+    /// Directory for this plugin already exists and does not need to be created again.
     #[error("Plugin is already installed.")]
     AlreadyInstalled,
 
+    /// An error occurred while trying to clone plugin's repository.
     #[error("could not clone the plugin repository: {}", .0)]
     GitClone(#[from] std::io::Error),
 
+    /// Git checkout of the specified version failed.
     #[error("could not checkout the specified plugin version '{version}', error: {error}")]
     GitCheckout { version: String, error: String },
 
-    #[error("could not determine plugin's version, error: {}", .0)]
-    Version(String),
+    /// No version was specified and Plux could not determine the plugin's default branch.
+    #[error("could not determine plugin's default branch: {}", .0)]
+    DefaultBranch(String),
 
+    /// Plux could not fetch available tags for a given plugin.
     #[error("could not fetch available tags: {}", .0)]
     TagFetch(String),
 }
 
 impl InstallError {
+    /// Helper function to pull out `stdout` from command's output if it succeeded. If command
+    /// failed, either the `stderr` or the [`std::io::Error`] is wrapped with the provided wrapper
+    /// and returned as [`Err`].
     fn wrap_cmd_res(
         output: std::io::Result<Output>,
         wrapper: impl FnOnce(String) -> Self,
@@ -82,6 +106,8 @@ impl InstallError {
     }
 }
 
+/// Models specification of a single plugin. This can either be URL-only, or full plugin
+/// specification. See [`FullPluginSpec`] for more details.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
 #[serde(untagged)]
 pub enum PluginSpec {
@@ -90,6 +116,7 @@ pub enum PluginSpec {
 }
 
 impl PluginSpec {
+    /// Returns the URL specified for this plugin as.
     pub fn url(&self) -> &str {
         match self {
             PluginSpec::Url(url) => url,
@@ -97,6 +124,8 @@ impl PluginSpec {
         }
     }
 
+    /// Tries to install plugin at the provided path. This involves cloning the git repository if
+    /// it's not already installed.
     pub fn try_install(&self, destination_dir: &Path) -> Result<(), InstallError> {
         let mut cmd = Command::new("git");
 
@@ -121,13 +150,15 @@ impl PluginSpec {
         Ok(())
     }
 
+    /// Determines the version of plugin that should be used and tries to choose that version.
     pub fn choose_version(&self, destination_dir: &Path) -> Result<Version, InstallError> {
-        let res = Command::new("git")
-            .args(["fetch", "--all", "--tags"])
-            .current_dir(destination_dir)
-            .output();
-
-        InstallError::wrap_cmd_res(res, InstallError::Version)?;
+        InstallError::wrap_cmd_res(
+            Command::new("git")
+                .args(["fetch", "--all", "--tags"])
+                .current_dir(destination_dir)
+                .output(),
+            InstallError::TagFetch,
+        )?;
 
         let tag_or_commit = if let PluginSpec::Full(full_plugin_spec) = self
             && let Some(tag_or_commit) = &full_plugin_spec.tag_or_commit
@@ -139,7 +170,7 @@ impl PluginSpec {
                     .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
                     .current_dir(destination_dir)
                     .output(),
-                InstallError::Version,
+                InstallError::DefaultBranch,
             )?;
 
             let branch = default_branch
