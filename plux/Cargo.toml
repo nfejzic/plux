@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 clap = { version = "4.5.47", features = ["derive"] }
-murus = { path = "../murus" }
+murus = { version = "0.1.1" }
 serde = { version = "1.0.219", features = ["serde_derive"] }
 toml = "0.9.5"
 thiserror.workspace = true
