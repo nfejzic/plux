@@ -16,6 +16,8 @@ jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
+    # run only on main repository, don't run (and fail) on forks
+    if: ${{ github.repository_owner == 'nfejzic' }}
     # Used to push tags, and create releases.
     permissions:
       contents: write
