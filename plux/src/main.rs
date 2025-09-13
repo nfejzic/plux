@@ -13,7 +13,7 @@ use std::{
 
 use clap::Parser;
 use murus::{OptionScope, Tmux};
-use plux::plugin::PluginSpecFile;
+use plux::plugin::{InstallError, PluginSpecFile};
 
 const HELP_TEMPLATE: &str = r#"
 {before-help}{name} {version}
@@ -136,19 +136,16 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux
 
 fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
     println!("installing plugins:");
+
     for (plugin_name, plugin_spec) in &plugin_spec.plugins {
         let plugin_dir = plugins_path.join(plugin_name);
 
-        if plugin_dir.is_dir() {
-            println!("\t{plugin_name} already installed, skipping git clone...");
-        } else {
-            println!(
-                "\t{plugin_name} from '{}' -> '{}'",
-                plugin_spec.url(),
-                plugin_dir.display()
-            );
-
-            if let Err(error) = plugin_spec.try_install(&plugin_dir) {
+        match plugin_spec.try_install(&plugin_dir) {
+            Ok(_) => (),
+            Err(InstallError::AlreadyInstalled) => {
+                println!("\t{plugin_name} already installed, skipping git clone...");
+            }
+            Err(error) => {
                 eprintln!("Could not install plugin:\n{error}");
                 continue;
             }

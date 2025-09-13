@@ -129,6 +129,10 @@ impl PluginSpec {
     pub fn try_install(&self, destination_dir: &Path) -> Result<(), InstallError> {
         let mut cmd = Command::new("git");
 
+        if destination_dir.is_dir() {
+            return Err(InstallError::AlreadyInstalled);
+        }
+
         let url = match self {
             PluginSpec::Url(url) => url,
             PluginSpec::Full(full_plugin_spec) => &full_plugin_spec.url,
