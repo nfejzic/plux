@@ -13,7 +13,7 @@ use std::{
 
 use clap::Parser;
 use murus::{OptionScope, Tmux};
-use plux::PluginSpec;
+use plux::PluginSpecFile;
 
 const HELP_TEMPLATE: &str = r#"
 {before-help}{name} {version}
@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(error_code);
         }
     };
-    let plugin_spec: PluginSpec = match toml::from_str(&plugins_spec) {
+    let plugin_spec: PluginSpecFile = match toml::from_str(&plugins_spec) {
         Ok(ps) => ps,
         Err(error) => {
             eprintln!("Syntax error in plugins spec:\n{error}");
@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpec, tmux: &Tmux) {
+fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux) {
     for plugin in plugin_spec.plugins.keys() {
         let plugin_dir = plugins_path.join(plugin);
 
@@ -133,7 +133,7 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpec, tmux: &Tmux) {
     }
 }
 
-fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpec) {
+fn install_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
     println!("installing plugins:");
     for (plugin, url) in &plugin_spec.plugins {
         let plugin_dir = plugins_path.join(plugin);
