@@ -142,14 +142,12 @@ impl PluginSpec {
                 InstallError::Version,
             )?;
 
-            let commit_hash = InstallError::wrap_cmd_res(
-                Command::new("git")
-                    .args(["rev-parse", default_branch.trim()])
-                    .current_dir(destination_dir)
-                    .output(),
-                InstallError::Version,
-            )?;
-            &Version::Commit(commit_hash)
+            let branch = default_branch
+                .strip_prefix("origin/")
+                .map(String::from)
+                .unwrap_or(default_branch);
+
+            &Version::Branch(branch)
         };
 
         let version = match &tag_or_commit {
