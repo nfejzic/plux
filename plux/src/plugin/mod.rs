@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, process::Output};
+use std::{
+    collections::HashMap,
+    path::Path,
+    process::{Command, Output},
+};
 
 pub const DEFAULT_PLUGINS_PATH: &str = "$HOME/.config/tmux/plux/";
 pub const DEFAULT_SPEC_PATH: &str = "$HOME/.config/tmux/plux.toml";
@@ -84,7 +88,7 @@ impl InstallError {
 
 impl PluginSpec {
     pub fn try_install(&self, destination_dir: &Path) -> Result<(), InstallError> {
-        let mut cmd = std::process::Command::new("git");
+        let mut cmd = Command::new("git");
 
         let url = match self {
             PluginSpec::Url(url) => url,
@@ -108,7 +112,7 @@ impl PluginSpec {
     }
 
     pub fn choose_version(&self, destination_dir: &Path) -> Result<TagOrCommit, InstallError> {
-        let res = std::process::Command::new("git")
+        let res = Command::new("git")
             .args(["fetch", "--all", "--tags"])
             .current_dir(destination_dir)
             .output();
@@ -120,12 +124,21 @@ impl PluginSpec {
         {
             tag_or_commit
         } else {
-            let result = std::process::Command::new("git")
-                .args(["rev-parse", "HEAD"])
-                .current_dir(destination_dir)
-                .output();
+            let default_branch = InstallError::wrap_cmd_res(
+                Command::new("git")
+                    .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
+                    .current_dir(destination_dir)
+                    .output(),
+                InstallError::Version,
+            )?;
 
-            let commit_hash = InstallError::wrap_cmd_res(result, InstallError::Version)?;
+            let commit_hash = InstallError::wrap_cmd_res(
+                Command::new("git")
+                    .args(["rev-parse", default_branch.trim()])
+                    .current_dir(destination_dir)
+                    .output(),
+                InstallError::Version,
+            )?;
             &TagOrCommit::Commit(commit_hash)
         };
 
@@ -134,7 +147,7 @@ impl PluginSpec {
             TagOrCommit::Commit(version) => version,
         };
 
-        let mut cmd = std::process::Command::new("git");
+        let mut cmd = Command::new("git");
         cmd.args(["checkout", version.trim()])
             .current_dir(destination_dir);
 
