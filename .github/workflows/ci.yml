@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v5
     - name: Run cargo fmt
       run: cargo fmt -- --check
 
@@ -33,7 +33,7 @@ jobs:
     needs: format
     
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v5
     - name: Run linter
       run: cargo clippy -- -D warnings
   
@@ -43,7 +43,7 @@ jobs:
     needs: lint
     
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v5
     - name: Run tests
       run: cargo test --verbose
 
@@ -53,6 +53,6 @@ jobs:
     needs: test
     
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v5
     - name: Build the workspace
       run: cargo build --verbose
