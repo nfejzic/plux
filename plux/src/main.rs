@@ -1,6 +1,7 @@
 use std::{
     env::VarError,
     fmt::Write,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -99,15 +100,82 @@ fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
 
     let plugins_path = expand_path(plugins_path)?;
 
+    // Ensure the plugins directory exists
+    if let Err(error) = fs::create_dir_all(&plugins_path) {
+        stderr!(
+            logger,
+            "Could not create plugins directory at {}",
+            plugins_path.display()
+        );
+        stderr!(logger, "Error: {error}");
+        std::process::exit(1);
+    }
+
+    // Check if config file exists, create it if not
     let plugins_spec = match std::fs::read_to_string(&plugin_spec_path) {
         Ok(p) => p,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Try to create the parent directory
+            if let Some(parent) = plugin_spec_path.parent() {
+                if let Err(create_error) = std::fs::create_dir_all(parent) {
+                    stderr!(
+                        logger,
+                        "Could not create config directory at {}",
+                        parent.display()
+                    );
+                    stderr!(logger, "Error: {create_error}");
+                    std::process::exit(1);
+                }
+            }
+
+            // Create a default config file with example content
+            let default_config = r#"# Plux Plugin Configuration
+#
+# Add your tmux plugins here. Example:
+#
+# [plugins]
+# tmux-grimoire = "https://github.com/navahas/tmux-grimoire"
+# tmux-sensible = "https://github.com/tmux-plugins/tmux-sensible"
+# tmux-yank = "https://github.com/tmux-plugins/tmux-yank"
+#
+# You can also specify versions:
+# my-plugin = { url = "https://github.com/user/plugin", tag = "v1.0.0" }
+# my-plugin = { url = "https://github.com/user/plugin", branch = "main" }
+# my-plugin = { url = "https://github.com/user/plugin", commit = "<hash>" }
+
+[plugins]
+"#;
+
+            if let Err(write_error) = std::fs::write(&plugin_spec_path, default_config) {
+                stderr!(
+                    logger,
+                    "Could not create default config file at {}",
+                    plugin_spec_path.display()
+                );
+                stderr!(logger, "Error: {write_error}");
+                std::process::exit(1);
+            }
+
+            stdout!(
+                logger,
+                "Created default config file at {}",
+                plugin_spec_path.display()
+            );
+            stdout!(logger, "Add your plugins to this file and reload tmux configuration.");
+
+            default_config.to_string()
+        }
         Err(error) => {
             stderr!(
                 logger,
                 "Could not read plugins spec at {}",
                 plugin_spec_path.display()
             );
-            stderr!(logger, "Error:\n{error}");
+            stderr!(logger, "Error: {error}");
+            stderr!(
+                logger,
+                "\nTroubleshooting:\n  1. Check file permissions\n  2. Verify the path is correct\n  3. Try creating an empty config file manually"
+            );
             let error_code = error.raw_os_error().unwrap_or(1);
             std::process::exit(error_code);
         }
@@ -116,7 +184,16 @@ fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
     let plugin_spec: PluginSpecFile = match toml::from_str(&plugins_spec) {
         Ok(ps) => ps,
         Err(error) => {
-            stderr!(logger, "Syntax error in plugins spec:\n{error}");
+            stderr!(
+                logger,
+                "Syntax error in plugins spec at {}:",
+                plugin_spec_path.display()
+            );
+            stderr!(logger, "{error}");
+            stderr!(
+                logger,
+                "\nTroubleshooting:\n  1. Check TOML syntax is valid\n  2. Ensure [plugins] section exists\n  3. See example format in the config file"
+            );
             std::process::exit(1);
         }
     };
