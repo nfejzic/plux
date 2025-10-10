@@ -22,6 +22,21 @@ You can install plux with using [cargo](https://doc.rust-lang.org/cargo/):
 
 `cargo install plux`
 
+After installation, add this line to your `~/.tmux.conf`:
+
+```
+run-shell plux
+```
+
+Then reload your tmux configuration with `tmux source-file ~/.tmux.conf`.
+
+On first run, plux will automatically:
+- Create `~/.config/tmux/` directory if it doesn't exist
+- Create `~/.config/tmux/plux/` plugins directory if it doesn't exist
+- Create `~/.config/tmux/plux.toml` with example configuration if it doesn't exist
+
+After that, edit `~/.config/tmux/plux.toml` to add your desired plugins and reload tmux.
+
 ### Plugin specification
 
 Plugins are specified in a single `plux.toml` file, with following syntax:
