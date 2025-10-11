@@ -121,11 +121,64 @@ fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    remove_orphaned_plugins(logger, &plugins_path, &plugin_spec);
+
     install_plugins(logger, &plugins_path, plugin_spec.clone());
 
     source_plugins(logger, &plugins_path, &plugin_spec, &tmux);
 
     Ok(())
+}
+
+fn remove_orphaned_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: &PluginSpecFile) {
+    // If plugins directory doesn't exist, nothing to clean up
+    if !plugins_path.exists() {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(plugins_path) else {
+        stderr!(
+            logger,
+            "Could not read plugins directory at {}",
+            plugins_path.display()
+        );
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+
+        // Only consider directories
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let dir_name_os = entry.file_name();
+        let Some(dir_name) = dir_name_os.to_str() else {
+            continue;
+        };
+
+        // Check if this directory name is in the plugin spec
+        if !plugin_spec.plugins.contains_key(dir_name) {
+            // This is an orphaned plugin - remove it
+            let plugin_path = entry.path();
+            match std::fs::remove_dir_all(&plugin_path) {
+                Ok(_) => {
+                    stdout!(logger, "Removed orphaned plugin: {}", dir_name);
+                }
+                Err(error) => {
+                    stderr!(
+                        logger,
+                        "Failed to remove orphaned plugin '{}': {}",
+                        dir_name,
+                        error
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn source_plugins(
