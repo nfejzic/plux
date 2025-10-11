@@ -134,15 +134,6 @@ checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
 
 [[package]]
 name = "murus"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf19785acdeba5c683a554fa7377a3b421ded1c5de6a0e6281c8eb48c7108f1a"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
-name = "murus"
 version = "0.2.0"
 dependencies = [
  "thiserror",
@@ -159,7 +150,7 @@ name = "plux"
 version = "0.2.0"
 dependencies = [
  "clap",
- "murus 0.1.1",
+ "murus",
  "serde",
  "thiserror",
  "toml",

@@ -72,21 +72,40 @@ macro_rules! stderr (
 fn main() {
     let mut logger = Logger::default();
 
-    if let Err(error) = run(&mut logger) {
-        eprintln!("Plugin installation failed...");
-        eprintln!("stdout:\n{}", logger.stdout);
-        eprintln!("stderr:\n{}", logger.stderr);
-        eprintln!("{error}");
-        std::process::exit(1);
+    // Try to show banner via tmux display-message for immediate feedback
+    // Display for 3 seconds to give users time to see it's starting
+    if let Ok(tmux) = Tmux::try_new() {
+        let banner = format!("plux v{} - tmux plugin manager", env!("CARGO_PKG_VERSION"));
+        let _ = tmux.display_message_with_duration(&banner, 3000);
+    }
+
+    match run(&mut logger) {
+        Ok(()) => {
+            // Print logger output on success
+            if !logger.stdout.is_empty() {
+                print!("{}", logger.stdout);
+            }
+            if !logger.stderr.is_empty() {
+                eprint!("{}", logger.stderr);
+            }
+        }
+        Err(error) => {
+            eprintln!("Plugin installation failed...");
+            eprintln!("stdout:\n{}", logger.stdout);
+            eprintln!("stderr:\n{}", logger.stderr);
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
     }
 }
 
 fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
     let _ = Config::parse();
-    let Ok(tmux) = murus::Tmux::try_new() else {
+
+    let tmux = murus::Tmux::try_new().map_err(|_| {
         stdout!(logger, "Plux must be called within a tmux session.");
         std::process::exit(1);
-    };
+    })?;
 
     let plugin_spec_path = tmux
         .get_option(SPEC_PATH_OPTION_NAME, OptionScope::Global)
@@ -198,11 +217,35 @@ fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Show progress via display-message for real-time feedback in tmux
+    // Short duration (1s) since these will be replaced by the next message
+    let _ = tmux.display_message_with_duration("→ Checking for orphaned plugins...", 1000);
     remove_orphaned_plugins(logger, &plugins_path, &plugin_spec);
 
+    let _ = tmux.display_message_with_duration("→ Installing plugins...", 20_000);
     install_plugins(logger, &plugins_path, plugin_spec.clone());
 
+    let _ = tmux.display_message_with_duration("→ Sourcing plugins...", 1000);
     source_plugins(logger, &plugins_path, &plugin_spec, &tmux);
+
+    // Success message - show immediately via display-message
+    // Longer duration (8s) so users can see the final result
+    let plugin_count = plugin_spec.plugins.len();
+    let success_msg = if plugin_count > 0 {
+        format!("✓ Plux completed! {} plugin(s) loaded", plugin_count)
+    } else {
+        "✓ Plux completed! No plugins configured yet".to_string()
+    };
+    let _ = tmux.display_message_with_duration(&success_msg, 8000);
+
+    // Also log detailed info to stdout (shown in copy-mode after completion)
+    stdout!(logger, "");
+    stdout!(logger, "✓ Plux completed successfully!");
+    if plugin_count > 0 {
+        stdout!(logger, "  {} plugin(s) loaded and sourced", plugin_count);
+    } else {
+        stdout!(logger, "  No plugins configured. Add plugins to {} to get started.", plugin_spec_path.display());
+    }
 
     Ok(())
 }
@@ -243,12 +286,12 @@ fn remove_orphaned_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec
             let plugin_path = entry.path();
             match std::fs::remove_dir_all(&plugin_path) {
                 Ok(_) => {
-                    stdout!(logger, "Removed orphaned plugin: {}", dir_name);
+                    stdout!(logger, "  ✓ Removed orphaned plugin: {}", dir_name);
                 }
                 Err(error) => {
                     stderr!(
                         logger,
-                        "Failed to remove orphaned plugin '{}': {}",
+                        "  ✗ Failed to remove orphaned plugin '{}': {}",
                         dir_name,
                         error
                     );
@@ -321,8 +364,6 @@ fn source_plugins(
 }
 
 fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: PluginSpecFile) {
-    stdout!(logger, "installing plugins:");
-
     enum Msg {
         PluginReady(String, PluginSpec),
         Stdout(String),
@@ -340,7 +381,7 @@ fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: Plugin
                     Ok(_) => tx.send(Msg::PluginReady(plugin_name, plugin_spec)).unwrap(),
                     Err(InstallError::AlreadyInstalled) => {
                         tx.send(Msg::Stdout(format!(
-                            "\t{plugin_name} already installed, skipping git clone..."
+                            "  ✓ {plugin_name} (already installed)"
                         )))
                         .unwrap();
                     }
@@ -361,10 +402,10 @@ fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: Plugin
                     let plugin_dir = plugins_path.join(&plugin_name);
                     match plugin_spec.choose_version(&plugin_dir) {
                         Ok(installed_version) => {
-                            stdout!(logger, "\t{plugin_name} intalled with {installed_version}");
+                            stdout!(logger, "  ✓ {plugin_name} ({installed_version})");
                         }
                         Err(error) => {
-                            stderr!(logger, "Failed to install '{plugin_name}', error:{error}");
+                            stderr!(logger, "  ✗ {plugin_name} - Failed to install: {error}");
                         }
                     }
                 }

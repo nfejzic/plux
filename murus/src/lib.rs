@@ -136,6 +136,33 @@ impl Tmux {
 
         Ok(())
     }
+
+    /// Displays a message in the tmux status line.
+    /// This is useful for showing real-time feedback from scripts run via run-shell.
+    /// The message will be displayed for the default duration (750ms by default in tmux).
+    pub fn display_message(&self, message: &str) -> Result<(), Error> {
+        std::process::Command::new("tmux")
+            .arg("display-message")
+            .arg(message)
+            .spawn()?
+            .wait()?;
+
+        Ok(())
+    }
+
+    /// Displays a message in the tmux status line with a custom duration.
+    /// Duration is specified in milliseconds.
+    pub fn display_message_with_duration(&self, message: &str, duration_ms: u32) -> Result<(), Error> {
+        std::process::Command::new("tmux")
+            .arg("display-message")
+            .arg("-d")
+            .arg(duration_ms.to_string())
+            .arg(message)
+            .spawn()?
+            .wait()?;
+
+        Ok(())
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
