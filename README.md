@@ -1,20 +1,9 @@
-# Tmux API and plugin manager
+# PLUX
 
-This workspace contains Rust crate that wraps tmux commands and a simple plugin
-manager for tmux.
+Minimal tmux plugin management, powered by Rust.
+This workspace also includes **murus**, a small Rust API wrapping a few tmux commands.
 
-## Plux - the plugin manager
-
-Plux is a very simple tmux plugin manager. Aim is to provide modern plugin
-management. To use the plugin manager, specify `plux.toml` file with desired
-plugins, and add `run-shell plux` to your tmux configuration.
-
-Plux needs to know two paths to do the work:
-
-- `@plux_toml_path` - where the `plux.toml` file is located. By default the
-  `$HOME/.config/tmux/plux.toml` is used.
-- `@plux_plugins_path` - directory that will contain installed plugins. By
-  default the `$HOME/.config/tmux/plux/` directory is used.
+## Quick Start
 
 ### Installation
 
@@ -42,64 +31,75 @@ cargo build --release
 ln -sf $PWD/target/release/plux /usr/local/bin/plux
 ```
 
-#### Configuration
+### Setup
 
-After installation, add this line to your `~/.tmux.conf`:
+1. Add this line to your `~/.tmux.conf`:
 
-```
+```bash
 run-shell plux
 ```
 
-Then reload your tmux configuration with `tmux source-file ~/.tmux.conf`.
+2. Reload tmux:
 
-On first run, plux will automatically:
-- Create `~/.config/tmux/` directory if it doesn't exist
-- Create `~/.config/tmux/plux/` plugins directory if it doesn't exist
-- Create `~/.config/tmux/plux.toml` with example configuration if it doesn't exist
+```bash
+tmux source-file ~/.tmux.conf
+```
 
-After that, edit `~/.config/tmux/plux.toml` to add your desired plugins and reload tmux.
+3. On first run, plux auto-creates:
+   - `~/.config/tmux/plux.toml` - plugin specification file
+   - `~/.config/tmux/plux/` - plugins directory
 
-### Plugin specification
+4. Edit `~/.config/tmux/plux.toml` to add your plugins (see below), then reload tmux again.
 
-Plugins are specified in a single `plux.toml` file, with following syntax:
+## Plugin Specification
+
+Add plugins to `~/.config/tmux/plux.toml`:
 
 ```toml
 [plugins]
-# you can specify the url of a plugin directly, default git branch will be used
-# (e.g. 'main')
+# Simple: plugin name = GitHub URL (uses default branch)
 tmux-ssh-split = "https://github.com/pschmitt/tmux-ssh-split"
 
-# or you can specify full plugin spec
-# with branch:
-tmux-fingers = { rul = "https://github.com/Morantron/tmux-fingers", branch = "feature-xyz" }
-# with tag:
-smart-splits = { url = "https://github.com/mrjones2014/smart-splits.nvim", tag = "v2.0.3"}
-# with commit hash:
-tmux-sensible = { url = "https://github.com/tmux-plugins/tmux-sensible", commit = "<commit hash>"}
+# With specific version:
+tmux-sensible = { url = "https://github.com/tmux-plugins/tmux-sensible", tag = "v2.0.3" }
+tmux-fingers = { url = "https://github.com/Morantron/tmux-fingers", branch = "feature-xyz" }
+some-plugin = { url = "https://github.com/user/repo", commit = "<commit-hash>" }
 ```
 
-### Plugin installation process
+## Configuration
 
-Plugin installation consists of three phases:
+### Custom Paths
 
-1. **Download** - Clones the plugin repository using `git clone --depth 1` for efficiency
-2. **Version selection** - Fetches tags and checks out the requested version (tag, branch, or commit)
-3. **Execution** - Loads the plugin into tmux using one of two methods (see compatibility below)
+Override default paths in your `~/.tmux.conf`:
 
-### TPM compatibility
+```bash
+set -g @plux_toml_path "~/custom/path/plux.toml"
+set -g @plux_plugins_path "~/custom/path/plugins/"
+```
 
-Plux maintains backward compatibility with [TPM](https://github.com/tmux-plugins/tpm) plugins while providing enhanced functionality for plux-aware plugins. Plugin execution works as follows:
+**Defaults:**
+- Config: `~/.config/tmux/plux.toml`
+- Plugins: `~/.config/tmux/plux/`
 
-#### Execution modes:
+## TPM Migration
 
-- **Plux-aware plugins**: If a `plux.tmux` file exists in the plugin's root directory, it is sourced directly via `tmux source-file <path>/plux.tmux`. This allows plugins to set tmux options and bindings in the current tmux context.
+Switching from [TPM](https://github.com/tmux-plugins/tpm):
 
-- **TPM-compatible plugins**: If no `plux.tmux` file exists, all `*.tmux` files in the plugin directory are executed in the background via `tmux run-shell -b <path>/*.tmux`. This matches TPM behavior and works with existing TPM plugins.
+1. Install plux (see above)
+2. Replace `run-shell '~/.tmux/plugins/tpm/tpm'` with `run-shell plux` in `~/.tmux.conf`
+3. Convert plugin list to `plux.toml` format
+4. Remove TPM
+5. Reload tmux
 
-#### Migration from TPM:
+**Compatibility:** Plux works with existing TPM plugins. If a plugin provides `plux.tmux`, it's sourced via `source-file`; otherwise all `*.tmux` files are executed via `run-shell -b`.
 
-Existing TPM users can switch to plux with minimal changes:
-1. Install plux and add `run-shell plux` to your `~/.tmux.conf`
-2. Convert your TPM plugin list to `plux.toml` format (see Plugin specification above)
-3. Remove TPM from your configuration
-4. Reload tmux - your existing plugins should work unchanged
+## How It Works
+
+Plux manages plugins in three steps:
+
+1. **Clone** - Downloads plugins using `git clone --depth 1`
+2. **Version** - Checks out specified tag/branch/commit
+3. **Load** - Sources/executes plugin files in tmux
+
+---
+
