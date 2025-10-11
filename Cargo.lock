@@ -53,6 +53,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.100"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
+
+[[package]]
 name = "clap"
 version = "4.5.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -134,16 +140,7 @@ checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
 
 [[package]]
 name = "murus"
-version = "0.1.1"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
-name = "murus"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf19785acdeba5c683a554fa7377a3b421ded1c5de6a0e6281c8eb48c7108f1a"
+version = "0.2.0"
 dependencies = [
  "thiserror",
 ]
@@ -156,10 +153,11 @@ checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
 name = "plux"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
+ "anyhow",
  "clap",
- "murus 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "murus",
  "serde",
  "thiserror",
  "toml",
