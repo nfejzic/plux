@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::Path,
-    process::{Command, Output},
-};
+use std::{collections::HashMap, path::Path};
 
 pub const DEFAULT_PLUGINS_PATH: &str = "$HOME/.config/tmux/plux/";
 pub const DEFAULT_SPEC_PATH: &str = "$HOME/.config/tmux/plux.toml";
@@ -67,43 +63,9 @@ pub enum InstallError {
     #[error("Plugin is already installed.")]
     AlreadyInstalled,
 
-    /// An error occurred while trying to clone plugin's repository.
-    #[error("could not clone the plugin repository: {}", .0)]
-    GitClone(#[from] std::io::Error),
-
-    /// Git checkout of the specified version failed.
-    #[error("could not checkout the specified plugin version '{version}', error: {error}")]
-    GitCheckout { version: String, error: String },
-
-    /// No version was specified and Plux could not determine the plugin's default branch.
-    #[error("could not determine plugin's default branch: {}", .0)]
-    DefaultBranch(String),
-
-    /// Plux could not fetch available tags for a given plugin.
-    #[error("could not fetch available tags: {}", .0)]
-    TagFetch(String),
-}
-
-impl InstallError {
-    /// Helper function to pull out `stdout` from command's output if it succeeded. If command
-    /// failed, either the `stderr` or the [`std::io::Error`] is wrapped with the provided wrapper
-    /// and returned as [`Err`].
-    fn wrap_cmd_res(
-        output: std::io::Result<Output>,
-        wrapper: impl FnOnce(String) -> Self,
-    ) -> Result<String, Self> {
-        match output {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8(output.stdout).expect("commands return utf8");
-                Ok(stdout)
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8(output.stderr).expect("commands return utf8");
-                Err(wrapper(stderr))
-            }
-            Err(error) => Err(wrapper(error.to_string())),
-        }
-    }
+    /// An error occurred during git operations
+    #[error("Git operation failed: {0}")]
+    Git(#[from] crate::git::GitError),
 }
 
 /// Models specification of a single plugin. This can either be URL-only, or full plugin
@@ -127,84 +89,39 @@ impl PluginSpec {
     /// Tries to install plugin at the provided path. This involves cloning the git repository if
     /// it's not already installed.
     pub fn try_install(&self, destination_dir: &Path) -> Result<(), InstallError> {
-        let mut cmd = Command::new("git");
-
         if destination_dir.is_dir() {
             return Err(InstallError::AlreadyInstalled);
         }
 
-        let url = match self {
-            PluginSpec::Url(url) => url,
-            PluginSpec::Full(full_plugin_spec) => &full_plugin_spec.url,
-        };
-
-        cmd.args(["clone", "--depth", "1", url])
-            .arg(destination_dir);
-
-        let output = cmd.output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(std::io::Error::other(format!(
-                "Failed cloning plugin. Error:\n\tstderr = '{stderr}'"
-            ))
-            .into());
-        }
+        let git = crate::git::Git::new();
+        git.clone_shallow(self.url(), destination_dir)?;
 
         Ok(())
     }
 
     /// Determines the version of plugin that should be used and tries to choose that version.
     pub fn choose_version(&self, destination_dir: &Path) -> Result<Version, InstallError> {
-        InstallError::wrap_cmd_res(
-            Command::new("git")
-                .args(["fetch", "--all", "--tags"])
-                .current_dir(destination_dir)
-                .output(),
-            InstallError::TagFetch,
-        )?;
+        let git = crate::git::Git::in_repo(destination_dir);
 
-        let tag_or_commit = if let PluginSpec::Full(full_plugin_spec) = self
+        git.fetch_tags()?;
+
+        let version = if let PluginSpec::Full(full_plugin_spec) = self
             && let Some(tag_or_commit) = &full_plugin_spec.tag_or_commit
         {
             tag_or_commit
         } else {
-            let default_branch = InstallError::wrap_cmd_res(
-                Command::new("git")
-                    .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
-                    .current_dir(destination_dir)
-                    .output(),
-                InstallError::DefaultBranch,
-            )?;
-
-            let branch = default_branch
-                .strip_prefix("origin/")
-                .map(String::from)
-                .unwrap_or(default_branch);
-
+            let branch = git.get_default_branch()?;
             &Version::Branch(branch)
         };
 
-        let version = match &tag_or_commit {
+        let version_str = match version {
             Version::Tag(tag) => tag,
-            Version::Commit(version) => version,
+            Version::Commit(commit) => commit,
             Version::Branch(branch) => branch,
         };
 
-        let mut cmd = Command::new("git");
-        cmd.args(["checkout", version.trim()])
-            .current_dir(destination_dir);
+        git.checkout(version_str)?;
 
-        match cmd.output() {
-            Ok(output) if output.status.success() => Ok(tag_or_commit.clone()),
-            Ok(output) => Err(InstallError::GitCheckout {
-                version: version.clone(),
-                error: String::from_utf8(output.stderr).expect("tmux uses utf8"),
-            }),
-            Err(error) => Err(InstallError::GitCheckout {
-                version: version.clone(),
-                error: error.to_string(),
-            }),
-        }
+        Ok(version.clone())
     }
 }

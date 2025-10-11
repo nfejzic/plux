@@ -1,12 +1,9 @@
-use std::{
-    env::VarError,
-    fmt::Write,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use clap::Parser;
-use murus::{OptionScope, Tmux};
+use murus::Tmux;
+use plux::config::Config;
+use plux::error::PluxError;
 use plux::plugin::{InstallError, PluginSpec, PluginSpecFile};
 
 const HELP_TEMPLATE: &str = r#"
@@ -19,246 +16,119 @@ const HELP_TEMPLATE: &str = r#"
 "#;
 
 const AFTER_HELP: &str = r#"
-Plux reads a plugin spec ("plux.toml") file by default at "~/.config/tmux/plux.toml" for plugins
-specification. You can customize the location of plugin spec file by setting global variable
-"@plux_toml_path" in your tmux configuration.
+CONFIGURATION:
+  Plugin spec file:   ~/.config/tmux/plux.toml  (customize with @plux_toml_path)
+  Plugins directory:  ~/.config/tmux/plux/      (customize with @plux_plugins_path)
 
-Plugin spec file is very simple and contains just a single toml table called "plugins" with each
-entry being the plugin name set to a plugin URL value. For example:
+PLUGIN SPECIFICATION:
+  The plux.toml file contains a [plugins] table mapping plugin names to URLs:
 
-```
-[plugins]
-some_plugin = "https://github.com/nfejzic/plux"
-```
+    [plugins]
+    some_plugin = "https://github.com/user/repo"
 
-Plugins are installed by default at "~/.config/tmux/plux/" directory. This can be customized as 
-well by setting global variable "@plux_plugins_path" in your tmux configuration.
+PLUGIN EXECUTION:
+  Plux maintains backward compatibility with TPM plugins using two execution modes:
+    1. If "plux.tmux" exists in the plugin root → sourced via tmux source-file
+    2. Otherwise → all *.tmux files executed via tmux run-shell
 
-To remain backwards compatible with plugins written for "tpm" plugin manager, plux runs plugins in 
-one of two ways:
+"#;
 
-    1. If "plux_start.tmux" file is present in the plugin's top-level directory, this file will be
-       sourced.
-    2. Otherwise, all files with ".tmux" extension will be sourced.
+const LOGO: &str = r#"
+__________.____     ____ _______  ___
+\______   \    |   |    |   \   \/  /
+ |     ___/    |   |    |   /\     / 
+ |    |   |    |___|    |  / /     \ 
+ |____|   |_______ \______/ /___/\  \
+                  \/              \_/
 "#;
 
 #[derive(clap::Parser)]
 #[command(version, author, about, long_about = None)]
 #[command(help_template = HELP_TEMPLATE)]
 #[command(after_help = AFTER_HELP)]
-struct Config;
-
-const PLUGINS_PATH_OPTION_NAME: &str = "@plux_plugins_path";
-const SPEC_PATH_OPTION_NAME: &str = "@plux_toml_path";
-
-#[derive(Default)]
-struct Logger {
-    stdout: String,
-    stderr: String,
-}
-
-macro_rules! stdout (
-    ($logger:ident, $($fmt:tt)*) => {
-        ::std::writeln!(&mut $logger.stdout, $($fmt)*).expect("writing to string is infallible")
-    }
-);
-
-macro_rules! stderr (
-    ($logger:ident, $($fmt:tt)*) => {
-        ::std::writeln!(&mut $logger.stderr, $($fmt)*).expect("writing to string is infallible")
-    }
-);
+struct CliArgs;
 
 fn main() {
-    let mut logger = Logger::default();
+    // Parse CLI args first - this will handle --help and --version and exit early
+    let _ = CliArgs::parse();
 
-    // Try to show banner via tmux display-message for immediate feedback
-    // Display for 3 seconds to give users time to see it's starting
+    // Only show banner when actually running the plugin manager
     if let Ok(tmux) = Tmux::try_new() {
-        let banner = format!("plux v{} - tmux plugin manager", env!("CARGO_PKG_VERSION"));
-        let _ = tmux.display_message_with_duration(&banner, 3000);
+        let banner = format!(" plux v{} - tmux plugin manager", env!("CARGO_PKG_VERSION"));
+        println!("{}\n{}", LOGO, banner);
+        println!("——————————————————————————————————————");
+
+        let _ = tmux.display_message_with_duration(&banner, 500);
     }
 
-    match run(&mut logger) {
-        Ok(()) => {
-            // Print logger output on success
-            if !logger.stdout.is_empty() {
-                print!("{}", logger.stdout);
+    if let Err(error) = run() {
+        eprintln!("Error: {error}");
+
+        // Provide helpful context based on error type
+        match &error {
+            PluxError::NotInTmux => {
+                eprintln!("\nPlux must be run inside a tmux session.");
+                eprintln!("Start tmux first with: tmux");
             }
-            if !logger.stderr.is_empty() {
-                eprint!("{}", logger.stderr);
+            PluxError::ConfigParse { path, .. } => {
+                eprintln!("\nTroubleshooting:");
+                eprintln!("  1. Check TOML syntax is valid");
+                eprintln!("  2. Ensure [plugins] section exists");
+                eprintln!("  3. See example format in {}", path.display());
             }
+            _ => {}
         }
-        Err(error) => {
-            eprintln!("Plugin installation failed...");
-            eprintln!("stdout:\n{}", logger.stdout);
-            eprintln!("stderr:\n{}", logger.stderr);
-            eprintln!("{error}");
-            std::process::exit(1);
-        }
+
+        std::process::exit(1);
     }
 }
 
-fn run(logger: &mut Logger) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = Config::parse();
-
-    let tmux = murus::Tmux::try_new().map_err(|_| {
-        stdout!(logger, "Plux must be called within a tmux session.");
-        std::process::exit(1);
-    })?;
-
-    let plugin_spec_path = tmux
-        .get_option(SPEC_PATH_OPTION_NAME, OptionScope::Global)
-        .unwrap_or(plux::plugin::DEFAULT_SPEC_PATH.into());
-
-    let plugin_spec_path = expand_path(plugin_spec_path)?;
-
-    let plugins_path = tmux
-        .get_option(PLUGINS_PATH_OPTION_NAME, OptionScope::Global)
-        .unwrap_or(plux::plugin::DEFAULT_PLUGINS_PATH.into());
-
-    let plugins_path = expand_path(plugins_path)?;
-
-    // Ensure the plugins directory exists
-    if let Err(error) = fs::create_dir_all(&plugins_path) {
-        stderr!(
-            logger,
-            "Could not create plugins directory at {}",
-            plugins_path.display()
-        );
-        stderr!(logger, "Error: {error}");
-        std::process::exit(1);
-    }
-
-    // Check if config file exists, create it if not
-    let plugins_spec = match std::fs::read_to_string(&plugin_spec_path) {
-        Ok(p) => p,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // Try to create the parent directory
-            if let Some(parent) = plugin_spec_path.parent() {
-                if let Err(create_error) = std::fs::create_dir_all(parent) {
-                    stderr!(
-                        logger,
-                        "Could not create config directory at {}",
-                        parent.display()
-                    );
-                    stderr!(logger, "Error: {create_error}");
-                    std::process::exit(1);
-                }
-            }
-
-            // Create a default config file with example content
-            let default_config = r#"# Plux Plugin Configuration
-#
-# Add your tmux plugins here. Example:
-#
-# [plugins]
-# tmux-grimoire = "https://github.com/navahas/tmux-grimoire"
-# tmux-sensible = "https://github.com/tmux-plugins/tmux-sensible"
-# tmux-yank = "https://github.com/tmux-plugins/tmux-yank"
-#
-# You can also specify versions:
-# my-plugin = { url = "https://github.com/user/plugin", tag = "v1.0.0" }
-# my-plugin = { url = "https://github.com/user/plugin", branch = "main" }
-# my-plugin = { url = "https://github.com/user/plugin", commit = "<hash>" }
-
-[plugins]
-"#;
-
-            if let Err(write_error) = std::fs::write(&plugin_spec_path, default_config) {
-                stderr!(
-                    logger,
-                    "Could not create default config file at {}",
-                    plugin_spec_path.display()
-                );
-                stderr!(logger, "Error: {write_error}");
-                std::process::exit(1);
-            }
-
-            stdout!(
-                logger,
-                "Created default config file at {}",
-                plugin_spec_path.display()
-            );
-            stdout!(logger, "Add your plugins to this file and reload tmux configuration.");
-
-            default_config.to_string()
-        }
-        Err(error) => {
-            stderr!(
-                logger,
-                "Could not read plugins spec at {}",
-                plugin_spec_path.display()
-            );
-            stderr!(logger, "Error: {error}");
-            stderr!(
-                logger,
-                "\nTroubleshooting:\n  1. Check file permissions\n  2. Verify the path is correct\n  3. Try creating an empty config file manually"
-            );
-            let error_code = error.raw_os_error().unwrap_or(1);
-            std::process::exit(error_code);
-        }
-    };
-
-    let plugin_spec: PluginSpecFile = match toml::from_str(&plugins_spec) {
-        Ok(ps) => ps,
-        Err(error) => {
-            stderr!(
-                logger,
-                "Syntax error in plugins spec at {}:",
-                plugin_spec_path.display()
-            );
-            stderr!(logger, "{error}");
-            stderr!(
-                logger,
-                "\nTroubleshooting:\n  1. Check TOML syntax is valid\n  2. Ensure [plugins] section exists\n  3. See example format in the config file"
-            );
-            std::process::exit(1);
-        }
-    };
+fn run() -> Result<(), PluxError> {
+    let tmux = Tmux::try_new().map_err(|_| PluxError::NotInTmux)?;
+    let config = Config::load(&tmux)?;
 
     // Show progress via display-message for real-time feedback in tmux
-    // Short duration (1s) since these will be replaced by the next message
-    let _ = tmux.display_message_with_duration("→ Checking for orphaned plugins...", 1000);
-    remove_orphaned_plugins(logger, &plugins_path, &plugin_spec);
+    let _ = tmux.display_message_with_duration(" PLUX | Checking for orphaned plugins...", 1000);
+    remove_orphaned_plugins(&config.plugins_path, &config.spec);
 
-    let _ = tmux.display_message_with_duration("→ Installing plugins...", 20_000);
-    install_plugins(logger, &plugins_path, plugin_spec.clone());
+    let _ = tmux.display_message_with_duration(" PLUX | Installing plugins...", 20_000);
+    install_plugins(&config.plugins_path, config.spec.clone());
 
-    let _ = tmux.display_message_with_duration("→ Sourcing plugins...", 1000);
-    source_plugins(logger, &plugins_path, &plugin_spec, &tmux);
+    let _ = tmux.display_message_with_duration(" PLUX | Sourcing plugins...", 1000);
+    source_plugins(&config.plugins_path, &config.spec, &tmux);
 
     // Success message - show immediately via display-message
-    // Longer duration (8s) so users can see the final result
-    let plugin_count = plugin_spec.plugins.len();
+    let plugin_count = config.spec.plugins.len();
     let success_msg = if plugin_count > 0 {
-        format!("✓ Plux completed! {} plugin(s) loaded", plugin_count)
+        format!("Plux completed! {} plugin(s) loaded", plugin_count)
     } else {
-        "✓ Plux completed! No plugins configured yet".to_string()
+        "Plux completed! No plugins configured yet".to_string()
     };
-    let _ = tmux.display_message_with_duration(&success_msg, 8000);
+    let _ = tmux.display_message_with_duration(&success_msg, 1000);
 
-    // Also log detailed info to stdout (shown in copy-mode after completion)
-    stdout!(logger, "");
-    stdout!(logger, "✓ Plux completed successfully!");
+    // Also log detailed info to stdout
+    println!();
+    println!("Plux completed successfully!");
     if plugin_count > 0 {
-        stdout!(logger, "  {} plugin(s) loaded and sourced", plugin_count);
+        println!("  {} plugin(s) loaded and sourced", plugin_count);
     } else {
-        stdout!(logger, "  No plugins configured. Add plugins to {} to get started.", plugin_spec_path.display());
+        println!(
+            "  No plugins configured. Add plugins to {} to get started.",
+            config.spec_path.display()
+        );
     }
 
     Ok(())
 }
 
-fn remove_orphaned_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: &PluginSpecFile) {
+fn remove_orphaned_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
     // If plugins directory doesn't exist, nothing to clean up
     if !plugins_path.exists() {
         return;
     }
 
-    let Ok(entries) = std::fs::read_dir(plugins_path) else {
-        stderr!(
-            logger,
+    let Ok(entries) = fs::read_dir(plugins_path) else {
+        eprintln!(
             "Could not read plugins directory at {}",
             plugins_path.display()
         );
@@ -284,16 +154,14 @@ fn remove_orphaned_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec
         if !plugin_spec.plugins.contains_key(dir_name) {
             // This is an orphaned plugin - remove it
             let plugin_path = entry.path();
-            match std::fs::remove_dir_all(&plugin_path) {
+            match fs::remove_dir_all(&plugin_path) {
                 Ok(_) => {
-                    stdout!(logger, "  ✓ Removed orphaned plugin: {}", dir_name);
+                    println!("  Removed orphaned plugin: {}", dir_name);
                 }
                 Err(error) => {
-                    stderr!(
-                        logger,
-                        "  ✗ Failed to remove orphaned plugin '{}': {}",
-                        dir_name,
-                        error
+                    eprintln!(
+                        "  Failed to remove orphaned plugin '{}': {}",
+                        dir_name, error
                     );
                 }
             }
@@ -301,24 +169,19 @@ fn remove_orphaned_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec
     }
 }
 
-fn source_plugins(
-    logger: &mut Logger,
-    plugins_path: &Path,
-    plugin_spec: &PluginSpecFile,
-    tmux: &Tmux,
-) {
-    let (stderr, stderr_rx) = std::sync::mpsc::channel();
+fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux) {
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
 
     std::thread::scope(move |scope| {
         let (tx, rx) = std::sync::mpsc::channel();
 
         for plugin in plugin_spec.plugins.keys() {
-            let stderr = stderr.clone();
+            let stderr = stderr_tx.clone();
             let tx = tx.clone();
             scope.spawn(move || {
                 let plugin_dir = plugins_path.join(plugin);
 
-                let read_dir = std::fs::read_dir(&plugin_dir).unwrap();
+                let read_dir = fs::read_dir(&plugin_dir).unwrap();
                 let entries: Vec<_> = read_dir.into_iter().map(Result::unwrap).collect();
 
                 let plux_tmux_entry = entries.iter().find(|entry| {
@@ -346,7 +209,7 @@ fn source_plugins(
                 .into_iter()
                 .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmux"))
             {
-                let stderr = stderr.clone();
+                let stderr = stderr_tx.clone();
                 scope.spawn(move || {
                     if let Err(error) = tmux.run_shell(&entry.path()) {
                         stderr.send(format!("{error}")).unwrap();
@@ -355,15 +218,15 @@ fn source_plugins(
             }
         }
 
-        drop(stderr);
+        drop(stderr_tx);
 
-        while let Ok(stderr) = stderr_rx.recv() {
-            stderr!(logger, "{stderr}");
+        while let Ok(error_msg) = stderr_rx.recv() {
+            eprintln!("{error_msg}");
         }
     });
 }
 
-fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: PluginSpecFile) {
+fn install_plugins(plugins_path: &Path, plugin_spec: PluginSpecFile) {
     enum Msg {
         PluginReady(String, PluginSpec),
         Stdout(String),
@@ -381,7 +244,7 @@ fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: Plugin
                     Ok(_) => tx.send(Msg::PluginReady(plugin_name, plugin_spec)).unwrap(),
                     Err(InstallError::AlreadyInstalled) => {
                         tx.send(Msg::Stdout(format!(
-                            "  ✓ {plugin_name} (already installed)"
+                            "  [OK] {plugin_name} (already installed)"
                         )))
                         .unwrap();
                     }
@@ -402,23 +265,15 @@ fn install_plugins(logger: &mut Logger, plugins_path: &Path, plugin_spec: Plugin
                     let plugin_dir = plugins_path.join(&plugin_name);
                     match plugin_spec.choose_version(&plugin_dir) {
                         Ok(installed_version) => {
-                            stdout!(logger, "  ✓ {plugin_name} ({installed_version})");
+                            println!("  [OK] {plugin_name} ({installed_version})");
                         }
                         Err(error) => {
-                            stderr!(logger, "  ✗ {plugin_name} - Failed to install: {error}");
+                            eprintln!("  [ERROR] {plugin_name} - Failed to install: {error}");
                         }
                     }
                 }
-                Msg::Stdout(msg) => stdout!(logger, "{msg}"),
+                Msg::Stdout(msg) => println!("{msg}"),
             }
         }
     });
-}
-
-fn expand_path(mut path: String) -> Result<PathBuf, VarError> {
-    let home = std::env::var("HOME")?;
-    path = path.replace("$HOME", &home);
-    path = path.replace("~", &home);
-
-    Ok(PathBuf::from(path))
 }

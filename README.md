@@ -18,9 +18,31 @@ Plux needs to know two paths to do the work:
 
 ### Installation
 
+#### From crates.io
+
 You can install plux with using [cargo](https://doc.rust-lang.org/cargo/):
 
-`cargo install plux`
+```bash
+cargo install plux
+```
+
+#### From source
+
+Alternatively, you can build and install from source:
+
+```bash
+# Clone the repository
+git clone https://github.com/nfejzic/plux.git
+cd plux
+
+# Build in release mode
+cargo build --release
+
+# Link the binary to your PATH
+ln -sf $PWD/target/release/plux /usr/local/bin/plux
+```
+
+#### Configuration
 
 After installation, add this line to your `~/.tmux.conf`:
 
@@ -56,18 +78,28 @@ smart-splits = { url = "https://github.com/mrjones2014/smart-splits.nvim", tag =
 tmux-sensible = { url = "https://github.com/tmux-plugins/tmux-sensible", commit = "<commit hash>"}
 ```
 
-### Plux compatibility
+### Plugin installation process
 
-There are multiple parts to plugin installation:
+Plugin installation consists of three phases:
 
-1. Download plugin - The first part is basically just downloading plugin files.
-   This is done with `git clone` command.
-2. Use version - The second part is determining what version needs to be used
-   and switching to that version.
-3. Starting the plugin - Plux retains a little bit of backwards compatibility
-   with [tpm](https://github.com/tmux-plugins/tpm), full compatibility is not
-   guaranteed. From my (limited) understanding, tpm simply runs all `.tmux`
-   files in plugins directory. Plux does that as well, with one exception. If
-   plugin contains a top level `plux_start.tmux` file, then this file is sourced
-   from tmux (e.g. `tmux source <path-to-plugin>/plux_start.tmux`). Otherwise
-   all `.tmux` files are executed (e.g. `tmux run-shell <path-to-file>.tmux`).
+1. **Download** - Clones the plugin repository using `git clone --depth 1` for efficiency
+2. **Version selection** - Fetches tags and checks out the requested version (tag, branch, or commit)
+3. **Execution** - Loads the plugin into tmux using one of two methods (see compatibility below)
+
+### TPM compatibility
+
+Plux maintains backward compatibility with [TPM](https://github.com/tmux-plugins/tpm) plugins while providing enhanced functionality for plux-aware plugins. Plugin execution works as follows:
+
+#### Execution modes:
+
+- **Plux-aware plugins**: If a `plux.tmux` file exists in the plugin's root directory, it is sourced directly via `tmux source-file <path>/plux.tmux`. This allows plugins to set tmux options and bindings in the current tmux context.
+
+- **TPM-compatible plugins**: If no `plux.tmux` file exists, all `*.tmux` files in the plugin directory are executed in the background via `tmux run-shell -b <path>/*.tmux`. This matches TPM behavior and works with existing TPM plugins.
+
+#### Migration from TPM:
+
+Existing TPM users can switch to plux with minimal changes:
+1. Install plux and add `run-shell plux` to your `~/.tmux.conf`
+2. Convert your TPM plugin list to `plux.toml` format (see Plugin specification above)
+3. Remove TPM from your configuration
+4. Reload tmux - your existing plugins should work unchanged
