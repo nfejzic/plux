@@ -19,11 +19,6 @@ pub struct Git {
 }
 
 impl Git {
-    /// Create a new Git instance for running commands
-    pub fn new() -> Self {
-        Self { repo_path: None }
-    }
-
     /// Create a Git instance for an existing repository
     pub fn in_repo(path: impl Into<PathBuf>) -> Self {
         Self {
@@ -61,9 +56,10 @@ impl Git {
 
     /// Fetches all tags from the remote repository
     pub fn fetch_tags(&self) -> Result<(), GitError> {
+        let args = ["fetch", "--all", "--tags"];
         let output = self
             .command()
-            .args(["fetch", "--all", "--tags"])
+            .args(&args)
             .output()
             .map_err(GitError::IoError)?;
 
@@ -71,7 +67,7 @@ impl Git {
             Ok(())
         } else {
             Err(GitError::CommandFailed {
-                command: "fetch --all --tags".to_string(),
+                command: args.join(" "),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             })
         }
@@ -79,9 +75,10 @@ impl Git {
 
     /// Checks out a specific version (tag, branch, or commit)
     pub fn checkout(&self, version: &str) -> Result<(), GitError> {
+        let args = ["checkout", version.trim()];
         let output = self
             .command()
-            .args(["checkout", version.trim()])
+            .args(&args)
             .output()
             .map_err(GitError::IoError)?;
 
@@ -89,7 +86,7 @@ impl Git {
             Ok(())
         } else {
             Err(GitError::CommandFailed {
-                command: format!("checkout {}", version),
+                command: args.join(" "),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             })
         }
@@ -97,9 +94,10 @@ impl Git {
 
     /// Gets the default branch of the repository
     pub fn get_default_branch(&self) -> Result<String, GitError> {
+        let args = ["rev-parse", "--abbrev-ref", "origin/HEAD"];
         let output = self
             .command()
-            .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
+            .args(&args)
             .output()
             .map_err(GitError::IoError)?;
 
@@ -112,7 +110,7 @@ impl Git {
             Ok(branch)
         } else {
             Err(GitError::CommandFailed {
-                command: "rev-parse --abbrev-ref origin/HEAD".to_string(),
+                command: args.join(" "),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             })
         }
@@ -121,6 +119,6 @@ impl Git {
 
 impl Default for Git {
     fn default() -> Self {
-        Self::new()
+        Self { repo_path: None }
     }
 }

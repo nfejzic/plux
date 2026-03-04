@@ -93,7 +93,7 @@ impl PluginSpec {
             return Err(InstallError::AlreadyInstalled);
         }
 
-        let git = crate::git::Git::new();
+        let git = crate::git::Git::default();
         git.clone_shallow(self.url(), destination_dir)?;
 
         Ok(())

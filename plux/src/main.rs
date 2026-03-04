@@ -62,19 +62,19 @@ fn main() {
     }
 
     if let Err(error) = run() {
-        eprintln!("Error: {error}");
+        println!("Error: {error}");
 
         // Provide helpful context based on error type
         match &error {
             PluxError::NotInTmux => {
-                eprintln!("\nPlux must be run inside a tmux session.");
-                eprintln!("Start tmux first with: tmux");
+                println!("\nPlux must be run inside a tmux session.");
+                println!("Start tmux first with: tmux");
             }
             PluxError::ConfigParse { path, .. } => {
-                eprintln!("\nTroubleshooting:");
-                eprintln!("  1. Check TOML syntax is valid");
-                eprintln!("  2. Ensure [plugins] section exists");
-                eprintln!("  3. See example format in {}", path.display());
+                println!("\nTroubleshooting:");
+                println!("  1. Check TOML syntax in {}", path.display());
+                println!("  2. Ensure [plugins] section exists");
+                println!("  3. Or delete the file and run plux again to regenerate the default config");
             }
             _ => {}
         }
