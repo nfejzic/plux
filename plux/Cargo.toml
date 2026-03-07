@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-clap = { version = "4.5.48", features = ["derive"] }
+clap = { version = "4.5.60", features = ["derive"] }
 # murus = "0.1.1"
 murus = { version = "0.2.0" } # _todo: replace path-based dependency with updated murus version
 serde = { version = "1.0.228", features = ["serde_derive"] }
