@@ -74,7 +74,9 @@ fn main() {
                 println!("\nTroubleshooting:");
                 println!("  1. Check TOML syntax in {}", path.display());
                 println!("  2. Ensure [plugins] section exists");
-                println!("  3. Or delete the file and run plux again to regenerate the default config");
+                println!(
+                    "  3. Or delete the file and run plux again to regenerate the default config"
+                );
             }
             _ => {}
         }
