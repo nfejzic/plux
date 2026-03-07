@@ -14,6 +14,7 @@ pub enum GitError {
 }
 
 /// Git operations handler
+#[derive(Default)]
 pub struct Git {
     repo_path: Option<PathBuf>,
 }
@@ -59,7 +60,7 @@ impl Git {
         let args = ["fetch", "--all", "--tags"];
         let output = self
             .command()
-            .args(&args)
+            .args(args)
             .output()
             .map_err(GitError::IoError)?;
 
@@ -78,7 +79,7 @@ impl Git {
         let args = ["checkout", version.trim()];
         let output = self
             .command()
-            .args(&args)
+            .args(args)
             .output()
             .map_err(GitError::IoError)?;
 
@@ -97,7 +98,7 @@ impl Git {
         let args = ["rev-parse", "--abbrev-ref", "origin/HEAD"];
         let output = self
             .command()
-            .args(&args)
+            .args(args)
             .output()
             .map_err(GitError::IoError)?;
 
@@ -114,11 +115,5 @@ impl Git {
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             })
         }
-    }
-}
-
-impl Default for Git {
-    fn default() -> Self {
-        Self { repo_path: None }
     }
 }
