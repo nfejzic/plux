@@ -140,6 +140,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "murus"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2aa380647daee66966d1dca9984e1d5a1dce1668eadad71b4d635acdaed78dc"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "once_cell_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -150,7 +159,7 @@ name = "plux"
 version = "0.2.0"
 dependencies = [
  "clap",
- "murus",
+ "murus 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "thiserror",
  "toml",
