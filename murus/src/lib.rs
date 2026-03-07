@@ -136,6 +136,32 @@ impl Tmux {
 
         Ok(())
     }
+
+    pub fn display_message(&self, message: &str) -> Result<(), Error> {
+        std::process::Command::new("tmux")
+            .arg("display-message")
+            .arg(message)
+            .spawn()?
+            .wait()?;
+
+        Ok(())
+    }
+
+    pub fn display_message_with_duration(
+        &self,
+        message: &str,
+        duration_ms: u32,
+    ) -> Result<(), Error> {
+        std::process::Command::new("tmux")
+            .arg("display-message")
+            .arg("-d")
+            .arg(duration_ms.to_string())
+            .arg(message)
+            .spawn()?
+            .wait()?;
+
+        Ok(())
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
