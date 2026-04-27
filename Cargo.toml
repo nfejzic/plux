@@ -3,7 +3,7 @@ members = [ "murus","plux"]
 resolver = "3"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["Nadir Fejzic <nadir@notfloor.com>"]
 description = "Crates for tmux API and plugin manager implementations"
@@ -13,6 +13,6 @@ readme = "README.md"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-murus = { path = "./murus", version = "0.2.1" }
+murus = { path = "./murus", version = "0.2.2" }
 
 thiserror = "2.0.18"
