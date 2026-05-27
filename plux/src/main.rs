@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{fs, path::Path};
 
 use clap::Parser;
@@ -42,62 +43,136 @@ __________.____     ____ _______  ___
                   \/              \_/
 "#;
 
+struct Printer<'tmux> {
+    tmux: &'tmux Tmux,
+    output: OutputChoice,
+}
+
+impl Printer<'_> {
+    fn display_in_status_line(&self, msg: &str, duration: impl Into<Option<Duration>>) {
+        if let Some(duration) = duration
+            .into()
+            .and_then(|d| u32::try_from(d.as_millis()).ok())
+        {
+            self.tmux
+                .display_message_with_duration(msg, duration)
+                .expect("tmux should be callable within tmux session");
+        } else {
+            self.tmux
+                .display_message(msg)
+                .expect("tmux should be callable within tmux session");
+        }
+    }
+
+    pub fn display_msg(&self, msg: &str, duration: impl Into<Option<Duration>>) {
+        self.display_choice((msg, msg), duration);
+    }
+
+    pub fn display_choice(
+        &self,
+        (status, stdout): (&str, &str),
+        duration: impl Into<Option<Duration>>,
+    ) {
+        match self.output {
+            OutputChoice::Stdout => println!("{stdout}"),
+            OutputChoice::Status => self.display_in_status_line(status, duration),
+        }
+    }
+}
+
+/// Option that decides where the output should be printed to.
+#[derive(Default, Debug, Clone, clap::ValueEnum)]
+enum OutputChoice {
+    /// Print messages to stdout
+    #[default]
+    Stdout,
+
+    /// Print messages to tmux status line
+    Status,
+}
+
 #[derive(clap::Parser)]
 #[command(version, author, about, long_about = None)]
 #[command(help_template = HELP_TEMPLATE)]
 #[command(after_help = AFTER_HELP)]
-struct CliArgs;
+struct CliArgs {
+    #[clap(short, long)]
+    output: OutputChoice,
+}
 
 fn main() {
     // Parse CLI args first - this will handle --help and --version and exit early
-    let _ = CliArgs::parse();
+    let args = CliArgs::parse();
 
-    // Only show banner when actually running the plugin manager
-    if let Ok(tmux) = Tmux::try_new() {
-        let banner = format!(" plux v{} - tmux plugin manager", env!("CARGO_PKG_VERSION"));
-        println!("{}\n{}", LOGO, banner);
-        println!("——————————————————————————————————————");
+    let load_result = Tmux::try_new()
+        .map_err(PluxError::from)
+        .and_then(|tmux| Config::load(&tmux).map(|config| (tmux, config)));
 
-        let _ = tmux.display_message_with_duration(&banner, 500);
-    }
+    let (tmux, config) = match load_result {
+        Ok((tmux, config)) => (tmux, config),
+        Err(error) => {
+            eprintln!("[ERROR] Plux failed:\n{error}");
 
-    if let Err(error) = run() {
-        println!("Error: {error}");
+            match error {
+                PluxError::NotInTmux => {
+                    eprintln!("\nPlux must be run inside a tmux session.");
+                    eprintln!("Start tmux first with: tmux");
+                }
 
-        // Provide helpful context based on error type
-        match &error {
-            PluxError::NotInTmux => {
-                println!("\nPlux must be run inside a tmux session.");
-                println!("Start tmux first with: tmux");
+                PluxError::PathExpansion(_) => eprintln!(
+                    "Could not find home directory. Make sure $HOME variable is set properly."
+                ),
+
+                PluxError::DirectoryCreation { path, .. }
+                | PluxError::ConfigRead { path, .. }
+                | PluxError::ConfigWrite { path, .. }
+                | PluxError::ConfigParse { path, .. } => {
+                    eprintln!();
+                    eprintln!("\nTroubleshooting:");
+                    eprintln!("  1. Check TOML syntax in {}", path.display());
+                    eprintln!("  2. Ensure [plugins] section exists");
+                    eprintln!(
+                        "  3. Or delete the file and run plux again to regenerate the default config"
+                    );
+                }
+
+                // NOTE(nfejzic): no meaningful message for other errors
+                PluxError::PluginInstall(_) | PluxError::Tmux(_) => {}
             }
-            PluxError::ConfigParse { path, .. } => {
-                println!("\nTroubleshooting:");
-                println!("  1. Check TOML syntax in {}", path.display());
-                println!("  2. Ensure [plugins] section exists");
-                println!(
-                    "  3. Or delete the file and run plux again to regenerate the default config"
-                );
-            }
-            _ => {}
+
+            std::process::exit(1);
         }
+    };
 
-        std::process::exit(1);
-    }
+    let printer = Printer {
+        tmux: &tmux,
+        output: args.output,
+    };
+
+    let banner = format!(" plux v{} - tmux plugin manager", env!("CARGO_PKG_VERSION"));
+    printer.display_msg(&banner, Duration::from_millis(500));
+
+    printer.display_msg(
+        &format!("{LOGO}\n{banner}\n——————————————————————————————————————"),
+        None,
+    );
+
+    run(&tmux, printer, config);
 }
 
-fn run() -> Result<(), PluxError> {
-    let tmux = Tmux::try_new().map_err(|_| PluxError::NotInTmux)?;
-    let config = Config::load(&tmux)?;
-
+fn run(tmux: &Tmux, printer: Printer, config: Config) {
     // Show progress via display-message for real-time feedback in tmux
-    let _ = tmux.display_message_with_duration(" PLUX | Checking for orphaned plugins...", 1000);
-    remove_orphaned_plugins(&config.plugins_path, &config.spec);
+    printer.display_msg(
+        " PLUX | Checking for orphaned plugins...",
+        Duration::from_millis(1000),
+    );
+    remove_orphaned_plugins(&printer, &config.plugins_path, &config.spec);
 
-    let _ = tmux.display_message_with_duration(" PLUX | Installing plugins...", 20_000);
-    install_plugins(&config.plugins_path, config.spec.clone());
+    printer.display_msg(" PLUX | Installing plugins...", Duration::from_secs(20));
+    install_plugins(&printer, &config.plugins_path, config.spec.clone());
 
-    let _ = tmux.display_message_with_duration(" PLUX | Sourcing plugins...", 1000);
-    source_plugins(&config.plugins_path, &config.spec, &tmux);
+    printer.display_msg(" PLUX | Sourcing plugins...", Duration::from_secs(1));
+    source_plugins(tmux, &config.plugins_path, &config.spec);
 
     // Success message - show immediately via display-message
     let plugin_count = config.spec.plugins.len();
@@ -106,24 +181,28 @@ fn run() -> Result<(), PluxError> {
     } else {
         "Plux completed! No plugins configured yet".to_string()
     };
-    let _ = tmux.display_message_with_duration(&success_msg, 1000);
 
-    // Also log detailed info to stdout
-    println!();
-    println!("Plux completed successfully!");
-    if plugin_count > 0 {
-        println!("  {} plugin(s) loaded and sourced", plugin_count);
-    } else {
-        println!(
-            "  No plugins configured. Add plugins to {} to get started.",
-            config.spec_path.display()
-        );
-    }
+    let detailed_msg = {
+        let mut msg = String::new();
+        msg += "\n";
+        msg += "Plux completed successfully!";
 
-    Ok(())
+        if plugin_count > 0 {
+            msg += &format!("\n  {} plugin(s) loaded and sourced", plugin_count);
+        } else {
+            msg += &format!(
+                "\n  No plugins configured. Add plugins to {} to get started.",
+                config.spec_path.display()
+            );
+        }
+
+        msg
+    };
+
+    printer.display_choice((&success_msg, &detailed_msg), Duration::from_secs(1));
 }
 
-fn remove_orphaned_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
+fn remove_orphaned_plugins(printer: &Printer, plugins_path: &Path, plugin_spec: &PluginSpecFile) {
     // If plugins directory doesn't exist, nothing to clean up
     if !plugins_path.exists() {
         return;
@@ -158,7 +237,10 @@ fn remove_orphaned_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
             let plugin_path = entry.path();
             match fs::remove_dir_all(&plugin_path) {
                 Ok(_) => {
-                    println!("  Removed orphaned plugin: {}", dir_name);
+                    printer.display_msg(
+                        &format!("  Removed orphaned plugin: {dir_name}"),
+                        Duration::from_secs(1),
+                    );
                 }
                 Err(error) => {
                     eprintln!(
@@ -171,7 +253,7 @@ fn remove_orphaned_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile) {
     }
 }
 
-fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux) {
+fn source_plugins(tmux: &Tmux, plugins_path: &Path, plugin_spec: &PluginSpecFile) {
     let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
 
     std::thread::scope(move |scope| {
@@ -228,10 +310,11 @@ fn source_plugins(plugins_path: &Path, plugin_spec: &PluginSpecFile, tmux: &Tmux
     });
 }
 
-fn install_plugins(plugins_path: &Path, plugin_spec: PluginSpecFile) {
+fn install_plugins(printer: &Printer, plugins_path: &Path, plugin_spec: PluginSpecFile) {
     enum Msg {
         PluginReady(String, PluginSpec),
-        Stdout(String),
+        AlreadyInstalled(String),
+        Err { error: String, plugin: String },
     }
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -245,14 +328,15 @@ fn install_plugins(plugins_path: &Path, plugin_spec: PluginSpecFile) {
                 match plugin_spec.try_install(&plugin_dir) {
                     Ok(_) => tx.send(Msg::PluginReady(plugin_name, plugin_spec)).unwrap(),
                     Err(InstallError::AlreadyInstalled) => {
-                        tx.send(Msg::Stdout(format!(
-                            "  [OK] {plugin_name} (already installed)"
-                        )))
-                        .unwrap();
+                        tx.send(Msg::AlreadyInstalled(plugin_name))
+                            .expect("receiver is dropped after this thread scope");
                     }
                     Err(error) => {
-                        tx.send(Msg::Stdout(format!("Could not install plugin:\n{error}")))
-                            .unwrap();
+                        tx.send(Msg::Err {
+                            error: format!("Could not install plugin:\n{error}"),
+                            plugin: plugin_name,
+                        })
+                        .expect("receiver is dropped after this thread scope");
                     }
                 }
             });
@@ -267,14 +351,20 @@ fn install_plugins(plugins_path: &Path, plugin_spec: PluginSpecFile) {
                     let plugin_dir = plugins_path.join(&plugin_name);
                     match plugin_spec.choose_version(&plugin_dir) {
                         Ok(installed_version) => {
-                            println!("  [OK] {plugin_name} ({installed_version})");
+                            let msg = format!("  [OK] {plugin_name} ({installed_version})");
+
+                            printer.display_msg(&msg, Duration::from_secs(1));
                         }
                         Err(error) => {
                             eprintln!("  [ERROR] {plugin_name} - Failed to install: {error}");
                         }
                     }
                 }
-                Msg::Stdout(msg) => println!("{msg}"),
+                Msg::AlreadyInstalled(plugin_name) => printer.display_msg(
+                    &format!("  [OK] {plugin_name} (already installed)"),
+                    Duration::from_secs(1),
+                ),
+                Msg::Err { error, plugin } => eprintln!("  [ERROR] {plugin} ({error})"),
             }
         }
     });
