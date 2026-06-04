@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::time::Duration;
 use std::{fs, path::Path};
 
@@ -91,12 +92,27 @@ enum OutputChoice {
     Status,
 }
 
+impl OutputChoice {
+    fn as_str(&self) -> &'static str {
+        match self {
+            OutputChoice::Stdout => "stdout",
+            OutputChoice::Status => "status",
+        }
+    }
+}
+
+impl Display for OutputChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(clap::Parser)]
 #[command(version, author, about, long_about = None)]
 #[command(help_template = HELP_TEMPLATE)]
 #[command(after_help = AFTER_HELP)]
 struct CliArgs {
-    #[clap(short, long)]
+    #[clap(short, long, default_value_t = OutputChoice::Stdout)]
     output: OutputChoice,
 }
 
